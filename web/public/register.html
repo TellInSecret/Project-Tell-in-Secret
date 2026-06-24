@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>회원가입 - TicMsg</title>
+  <meta name="description" content="TicMsg 계정을 만들고 공개키를 등록하세요.">
+  <link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+
+<div class="auth-page">
+  <div class="auth-box">
+    <div class="auth-logo">🔐 TicMsg</div>
+    <div class="auth-title">계정 만들기</div>
+    <div class="auth-subtitle">클라이언트의 공개키를 붙여넣어 등록하세요</div>
+
+    <!-- Steps -->
+    <div class="steps" id="step-indicator">
+      <div class="step active" id="step1-dot">
+        <div class="step-dot">1</div>
+        <div class="step-label">계정 정보</div>
+      </div>
+      <div class="step" id="step2-dot">
+        <div class="step-dot">2</div>
+        <div class="step-label">공개키 등록</div>
+      </div>
+      <div class="step" id="step3-dot">
+        <div class="step-dot">3</div>
+        <div class="step-label">완료</div>
+      </div>
+    </div>
+
+    <div id="alert-box" class="alert"></div>
+
+    <!-- Step 1: Account info -->
+    <form id="form-step1" onsubmit="return false;">
+      <div class="form-group">
+        <label for="reg-username">아이디</label>
+        <input type="text" id="reg-username" placeholder="3~32자 영문, 숫자" autocomplete="username" maxlength="32">
+      </div>
+      <div class="form-group">
+        <label for="reg-password">비밀번호</label>
+        <input type="password" id="reg-password" placeholder="8자 이상" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label for="reg-password2">비밀번호 확인</label>
+        <input type="password" id="reg-password2" placeholder="비밀번호 재입력" autocomplete="new-password">
+      </div>
+      <button class="btn btn-primary btn-full" id="btn-next-step1">다음 →</button>
+    </form>
+
+    <!-- Step 2: Public key -->
+    <form id="form-step2" style="display:none;" onsubmit="return false;">
+      <div class="form-group">
+        <label for="reg-device-name">기기 이름</label>
+        <input type="text" id="reg-device-name" placeholder="예: 내 PC, 집 노트북" value="내 기기">
+      </div>
+      <div class="form-group">
+        <label for="reg-pubkey">클라이언트 공개키</label>
+        <textarea id="reg-pubkey" placeholder="클라이언트 앱에서 공개키를 복사하여 붙여넣으세요..."></textarea>
+        <p class="form-hint">📋 클라이언트 설정 → 공개키 복사 버튼을 눌러 가져오세요</p>
+      </div>
+      <button class="btn btn-primary btn-full" id="btn-register" type="button">
+        <span id="reg-btn-text">가입 완료</span>
+        <span id="reg-spinner" class="spinner" style="display:none;"></span>
+      </button>
+      <button class="btn btn-secondary btn-full" style="margin-top:8px;" onclick="goToStep(1)">← 이전</button>
+    </form>
+
+    <!-- Step 3: Done -->
+    <div id="form-step3" style="display:none; text-align:center;">
+      <div style="font-size: 3rem; margin-bottom: 16px;">🎉</div>
+      <h2 style="font-size: 1.2rem; font-weight: 700; margin-bottom: 8px;">가입 완료!</h2>
+      <p style="color: var(--text2); font-size: 0.9rem; margin-bottom: 28px;">
+        이제 대시보드에서 활성화 키를 발급받아<br>클라이언트에 입력하면 사용할 수 있습니다.
+      </p>
+      <a href="dashboard.html" class="btn btn-primary btn-full">대시보드로 이동 →</a>
+    </div>
+
+    <div class="form-divider" id="login-link-divider">또는</div>
+    <a href="login.html" style="display:block; text-align:center; font-size:0.88rem;" id="login-link">
+      이미 계정이 있나요? <strong>로그인</strong>
+    </a>
+  </div>
+</div>
+
+<script src="js/site.js"></script>
+<script>
+const API = window.TICMSG_API || '';
+
+function showAlert(msg, type = 'error') {
+  const el = document.getElementById('alert-box');
+  el.className = `alert alert-${type} show`;
+  el.textContent = msg;
+}
+function hideAlert() {
+  document.getElementById('alert-box').className = 'alert';
+}
+
+function goToStep(n) {
+  document.getElementById('form-step1').style.display = n === 1 ? '' : 'none';
+  document.getElementById('form-step2').style.display = n === 2 ? '' : 'none';
+  document.getElementById('form-step3').style.display = n === 3 ? '' : 'none';
+  document.getElementById('login-link-divider').style.display = n === 3 ? 'none' : '';
+  document.getElementById('login-link').style.display = n === 3 ? 'none' : '';
+
+  ['step1-dot','step2-dot','step3-dot'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.className = 'step' + (i+1 < n ? ' done' : '') + (i+1 === n ? ' active' : '');
+  });
+
+  hideAlert();
+}
+
+document.getElementById('btn-next-step1').addEventListener('click', () => {
+  const u = document.getElementById('reg-username').value.trim();
+  const p = document.getElementById('reg-password').value;
+  const p2 = document.getElementById('reg-password2').value;
+
+  if (u.length < 3) return showAlert('아이디는 3자 이상이어야 합니다.');
+  if (p.length < 8) return showAlert('비밀번호는 8자 이상이어야 합니다.');
+  if (p !== p2) return showAlert('비밀번호가 일치하지 않습니다.');
+
+  goToStep(2);
+});
+
+document.getElementById('btn-register').addEventListener('click', async () => {
+  const username = document.getElementById('reg-username').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const publicKey = document.getElementById('reg-pubkey').value.trim();
+  const deviceName = document.getElementById('reg-device-name').value.trim() || '내 기기';
+
+  if (!publicKey) return showAlert('공개키를 입력하세요.');
+
+  const btn = document.getElementById('btn-register');
+  btn.disabled = true;
+  document.getElementById('reg-btn-text').textContent = '처리 중...';
+  document.getElementById('reg-spinner').style.display = 'inline-block';
+
+  try {
+    const res = await fetch(`${API}/api/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, publicKey, deviceName }),
+    });
+    const data = await res.json();
+    if (!res.ok) return showAlert(data.error || '가입에 실패했습니다.');
+
+    // Save token
+    localStorage.setItem('ticmsg_token', data.token);
+    localStorage.setItem('ticmsg_username', username);
+
+    goToStep(3);
+  } catch (e) {
+    showAlert('서버 연결 오류: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    document.getElementById('reg-btn-text').textContent = '가입 완료';
+    document.getElementById('reg-spinner').style.display = 'none';
+  }
+});
+</script>
+</body>
+</html>

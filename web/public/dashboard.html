@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>대시보드 - TicMsg</title>
+  <link rel="stylesheet" href="css/site.css">
+  <style>
+    /* 인증 체크 전 깜빡임 방지 */
+    body { visibility: hidden; }
+    body.ready { visibility: visible; }
+    .dash-section { margin-bottom: 40px; }
+    .dash-section-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
+    }
+    .activation-step {
+      background: rgba(99,102,241,0.06);
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: var(--radius);
+      padding: 24px 28px;
+    }
+    .activation-step h3 { font-size: 1rem; font-weight: 600; margin-bottom: 6px; }
+    .activation-step p { font-size: 0.88rem; color: var(--text2); margin-bottom: 16px; }
+    .select-device {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 0.9rem;
+      width: 100%;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    .key-generated-box {
+      display: none;
+      margin-top: 16px;
+    }
+    .key-generated-box.show { display: block; }
+    .copy-hint {
+      font-size: 0.8rem; color: var(--text3); margin-top: 8px; text-align: center;
+    }
+    .add-device-form {
+      background: rgba(0,0,0,0.2);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-top: 12px;
+      display: none;
+    }
+    .add-device-form.show { display: block; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <div class="nav-logo">
+      <span class="logo-icon">🔐</span>
+      TicMsg
+    </div>
+    <div class="nav-links" style="gap:12px;">
+      <span id="nav-username" style="color:var(--text2); font-size:0.9rem;"></span>
+      <button class="btn btn-secondary btn-sm" id="btn-logout">로그아웃</button>
+    </div>
+  </div>
+</nav>
+
+<div class="dashboard">
+  <div class="dash-header">
+    <div class="dash-greeting">안녕하세요, <span id="username-display">사용자</span>님 👋</div>
+  </div>
+
+  <!-- ── 1. 활성화 키 발급 ── -->
+  <div class="dash-section">
+    <div class="section-label">🔑 활성화 키 발급</div>
+    <div class="activation-step">
+      <h3>클라이언트 활성화</h3>
+      <p>새 기기 또는 재설치 후 활성화가 필요한 경우, 기기를 선택하고 활성화 키를 발급받으세요.<br>발급된 키를 클라이언트 앱에 입력하면 활성화가 완료됩니다. (24시간 유효)</p>
+      <select id="select-device" class="select-device">
+        <option value="">기기 선택...</option>
+      </select>
+      <div id="alert-activate" class="alert"></div>
+      <button class="btn btn-primary" id="btn-issue-key">활성화 키 발급</button>
+
+      <div class="key-generated-box" id="key-result-box">
+        <div class="activation-key-box" id="activation-key-display">────────────</div>
+        <div class="copy-hint">위 코드를 클라이언트 앱에 입력하세요. 24시간 후 만료됩니다.</div>
+        <button class="btn btn-secondary btn-sm" id="btn-copy-key" style="margin-top:12px; width:100%;">
+          📋 키 복사하기
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 2. 기기 관리 ── -->
+  <div class="dash-section">
+    <div class="dash-section-header">
+      <div>
+        <div class="section-label" style="margin-bottom:0;">
+          📱 기기 관리
+          <span id="device-count-badge" class="device-count-badge">0 / 5</span>
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="btn-show-add-device">+ 기기 추가</button>
+    </div>
+
+    <div id="alert-device" class="alert"></div>
+
+    <!-- Add device form -->
+    <div class="add-device-form" id="add-device-form">
+      <div class="form-group">
+        <label for="new-device-name">기기 이름</label>
+        <input type="text" id="new-device-name" placeholder="예: 직장 PC, 스마트폰" value="새 기기">
+      </div>
+      <div class="form-group">
+        <label for="new-device-pubkey">클라이언트 공개키</label>
+        <textarea id="new-device-pubkey" style="font-family:'JetBrains Mono',monospace; font-size:0.78rem; min-height:80px; width:100%; background:rgba(0,0,0,0.3); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:10px; outline:none;" placeholder="클라이언트에서 공개키를 복사하여 붙여넣으세요..."></textarea>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary btn-sm" id="btn-add-device">기기 등록</button>
+        <button class="btn btn-secondary btn-sm" id="btn-cancel-add">취소</button>
+      </div>
+    </div>
+
+    <ul class="device-list" id="device-list">
+      <li style="color:var(--text3); text-align:center; padding:20px; font-size:0.9rem;">로딩 중...</li>
+    </ul>
+  </div>
+
+</div>
+
+<script>
+const API = window.TICMSG_API || '';
+let token = localStorage.getItem('ticmsg_token');
+const username = localStorage.getItem('ticmsg_username') || '사용자';
+
+// 인증 체크 — 토큰 없으면 로그인으로, 있으면 서버에서 검증
+(async function verifySession() {
+  if (!token) {
+    sessionStorage.setItem('redirected_from_dashboard', '1');
+    window.location.replace('login.html');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API}/api/devices`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!res.ok) {
+      // 토큰 만료/무효 → 정리후 로그인으로
+      localStorage.removeItem('ticmsg_token');
+      localStorage.removeItem('ticmsg_username');
+      sessionStorage.setItem('redirected_from_dashboard', '1');
+      window.location.replace('login.html');
+      return;
+    }
+  } catch (e) {
+    // 서버 연결 실패 → 현재 페이지 표시 유지 (오프라인 모드)
+  }
+
+  // 인증 OK → 페이지 표시
+  document.getElementById('username-display').textContent = username;
+  document.getElementById('nav-username').textContent = username;
+  document.body.classList.add('ready');
+  loadDevices();
+})();
+
+document.getElementById('btn-logout').addEventListener('click', () => {
+  localStorage.removeItem('ticmsg_token');
+  localStorage.removeItem('ticmsg_username');
+  window.location.replace('login.html');
+});
+
+// ── Alert helpers ──
+function showAlert(id, msg, type = 'error') {
+  const el = document.getElementById(id);
+  el.className = `alert alert-${type} show`;
+  el.textContent = msg;
+}
+function hideAlert(id) { document.getElementById(id).className = 'alert'; }
+
+// ── Auth headers ──
+function authHeaders() {
+  return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+}
+
+// ── Load devices ──
+let devices = [];
+async function loadDevices() {
+  try {
+    const res = await fetch(`${API}/api/devices`, { headers: authHeaders() });
+    if (res.status === 401) { window.location.replace('login.html'); return; }
+    const data = await res.json();
+    devices = data.devices || [];
+    renderDevices();
+    populateDeviceSelect();
+  } catch (e) {
+    console.error('기기 목록 로딩 실패:', e);
+  }
+}
+
+function renderDevices() {
+  const list = document.getElementById('device-list');
+  const badge = document.getElementById('device-count-badge');
+  const isFull = devices.length >= 5;
+
+  badge.textContent = `${devices.length} / 5`;
+  badge.className = `device-count-badge${isFull ? ' full' : ''}`;
+
+  if (devices.length === 0) {
+    list.innerHTML = `<li style="color:var(--text3); text-align:center; padding:20px; font-size:0.9rem;">등록된 기기가 없습니다.</li>`;
+    return;
+  }
+
+  list.innerHTML = devices.map(d => {
+    const date = new Date(d.registered_at).toLocaleDateString('ko-KR');
+    const lastSeen = d.last_seen ? new Date(d.last_seen).toLocaleDateString('ko-KR') : '없음';
+    return `
+      <li class="device-item" data-id="${d.id}">
+        <div class="device-icon">💻</div>
+        <div class="device-info">
+          <div class="device-name">${escHtml(d.device_name)}</div>
+          <div class="device-meta">등록: ${date} · 마지막 접속: ${lastSeen}</div>
+          <div class="device-meta" style="font-size:0.72rem; color:var(--text3);">${d.public_key_hash.slice(0,16)}...</div>
+        </div>
+        <div class="device-actions">
+          <button class="btn btn-danger btn-sm" onclick="deleteDevice('${d.id}')">삭제</button>
+        </div>
+      </li>`;
+  }).join('');
+}
+
+function populateDeviceSelect() {
+  const sel = document.getElementById('select-device');
+  sel.innerHTML = '<option value="">기기 선택...</option>' +
+    devices.map(d => `<option value="${d.id}">${escHtml(d.device_name)}</option>`).join('');
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function deleteDevice(id) {
+  if (!confirm('이 기기를 삭제하시겠습니까? 해당 기기는 다시 활성화해야 합니다.')) return;
+  try {
+    const res = await fetch(`${API}/api/devices/${id}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) return showAlert('alert-device', data.error, 'error');
+    showAlert('alert-device', '기기가 삭제되었습니다.', 'success');
+    await loadDevices();
+  } catch (e) {
+    showAlert('alert-device', '오류: ' + e.message);
+  }
+}
+
+// ── Activation key ──
+document.getElementById('btn-issue-key').addEventListener('click', async () => {
+  const deviceId = document.getElementById('select-device').value;
+  if (!deviceId) return showAlert('alert-activate', '기기를 선택하세요.', 'error');
+  hideAlert('alert-activate');
+
+  try {
+    const res = await fetch(`${API}/api/activate/issue`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ deviceId }),
+    });
+    const data = await res.json();
+    if (!res.ok) return showAlert('alert-activate', data.error, 'error');
+
+    document.getElementById('activation-key-display').textContent = data.activationKey;
+    document.getElementById('key-result-box').classList.add('show');
+    showAlert('alert-activate', '활성화 키가 발급되었습니다. 24시간 내에 클라이언트에 입력하세요.', 'success');
+  } catch (e) {
+    showAlert('alert-activate', '오류: ' + e.message);
+  }
+});
+
+document.getElementById('btn-copy-key').addEventListener('click', () => {
+  const key = document.getElementById('activation-key-display').textContent;
+  navigator.clipboard.writeText(key).then(() => {
+    document.getElementById('btn-copy-key').textContent = '✅ 복사됨!';
+    setTimeout(() => { document.getElementById('btn-copy-key').textContent = '📋 키 복사하기'; }, 2000);
+  });
+});
+
+// ── Add device ──
+document.getElementById('btn-show-add-device').addEventListener('click', () => {
+  if (devices.length >= 5) {
+    showAlert('alert-device', '최대 5대까지 등록 가능합니다. 기존 기기를 삭제한 후 다시 시도하세요.', 'error');
+    return;
+  }
+  document.getElementById('add-device-form').classList.add('show');
+  hideAlert('alert-device');
+});
+
+document.getElementById('btn-cancel-add').addEventListener('click', () => {
+  document.getElementById('add-device-form').classList.remove('show');
+});
+
+document.getElementById('btn-add-device').addEventListener('click', async () => {
+  const publicKey = document.getElementById('new-device-pubkey').value.trim();
+  const deviceName = document.getElementById('new-device-name').value.trim() || '새 기기';
+
+  if (!publicKey) return showAlert('alert-device', '공개키를 입력하세요.', 'error');
+
+  try {
+    const res = await fetch(`${API}/api/devices`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ publicKey, deviceName }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (data.code === 'DEVICE_LIMIT_REACHED') {
+        showAlert('alert-device', data.error, 'error');
+      } else {
+        showAlert('alert-device', data.error || '등록 실패', 'error');
+      }
+      return;
+    }
+    showAlert('alert-device', '기기가 등록되었습니다! 활성화 키를 발급하세요.', 'success');
+    document.getElementById('add-device-form').classList.remove('show');
+    document.getElementById('new-device-pubkey').value = '';
+    await loadDevices();
+  } catch (e) {
+    showAlert('alert-device', '오류: ' + e.message);
+  }
+});
+
+// 실행 시작 — verifySession()에서 호출되므로 하단 초기화 호출 삭제
+</script>
+</body>
+</html>

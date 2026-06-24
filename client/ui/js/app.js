@@ -43,6 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const createRoomPasswordInput = document.getElementById('create-room-password');
   const joinRoomPasswordInput = document.getElementById('join-room-password');
   const channelRoomTitle = document.getElementById('channel-room-title');
+  const screenMain = document.getElementById('screen-main');
   const messageFeed = document.getElementById('message-feed');
   const messageInput = document.getElementById('message-input');
   const btnSend = document.getElementById('btn-send');
@@ -273,12 +274,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  function updateRoomSelectionState() {
+    if (!screenMain) return;
+    screenMain.classList.toggle('room-selected', !!activeRoomId);
+  }
+
   function goHome() {
     activeRoomId = null;
     activeChannelId = null;
     if (p2p?.roomId) {
       p2p.leaveRoom();
     }
+    updateRoomSelectionState();
     chatTitle.textContent = '채팅을 선택하세요';
     channelRoomTitle.textContent = '';
     chatMembersCount.textContent = '';
@@ -598,6 +605,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           activeChannelId = chs[0].id;
           if (p2p) p2p.activeChannelId = activeChannelId;
         }
+        updateRoomSelectionState();
         channelRoomTitle.textContent = room.name;
         chatTitle.textContent = chs[0] ? `# ${chs[0].name}` : room.name;
         chatMembersCount.textContent = p2p?.roomId === rid ? `${p2p.getPeerCount() + 1}명 온라인` : '오프라인 (기록)';
