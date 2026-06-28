@@ -100,50 +100,78 @@
 </svg>
 
 <!-- ═══════════════════════════════════════════════════
-     ACTIVATION SCREEN (최초 실행 / 미활성화)
-═══════════════════════════════════════════════════ -->
+     ACTIVATION SCREEN (최초 실행 / 미활성화 -> 로컬 로그인 / 가입 화면)
+ ═══════════════════════════════════════════════════ -->
 <div id="screen-activation" class="activation-overlay">
   <div class="activation-box">
     <div class="activation-logo">
       <svg class="activation-logo-icon"><use href="#icon-shield-lock"/></svg>
       <span>TicMsg</span>
     </div>
-    <h1 class="activation-title">클라이언트 활성화</h1>
-    <p class="activation-desc">
-      홈페이지에서 가입 후 발급된 활성화 키를 입력하세요.<br>
-      처음이라면 아래 공개키를 복사해 홈페이지 가입에 사용하세요.
-    </p>
 
-    <!-- Public Key Display -->
-    <div class="pubkey-section">
-      <label class="pubkey-label">내 공개키 (복사 후 홈페이지 가입에 사용)</label>
-      <div class="pubkey-display" id="activation-pubkey">생성 중...</div>
-      <button class="btn-copy-pubkey" id="btn-copy-pubkey">
-        <svg><use href="#icon-copy"/></svg> 복사
-      </button>
-    </div>
-
-    <div class="activation-form">
-      <div class="act-field">
-        <label for="activation-server-url">서버 주소</label>
-        <input type="url" id="activation-server-url" placeholder="http://localhost:3000" value="http://localhost:3000">
+    <!-- 신규 실행 시: 가입 / 가져오기 선택화면 -->
+    <div id="setup-options-container">
+      <h1 class="activation-title">신원 설정 (최초 실행)</h1>
+      <p class="activation-desc" style="margin-bottom:16px;">
+        보안 P2P 메신저 사용을 위해 신원을 생성하거나 가져오세요.<br>
+        모든 정보는 로컬에 안전하게 암호화되어 저장됩니다.
+      </p>
+      
+      <div class="tab-buttons" style="display:flex; gap:10px; margin-bottom:16px;">
+        <button class="btn btn-primary" id="tab-setup-signup">새 신원 가입</button>
+        <button class="btn btn-secondary" id="tab-setup-import">기존 키 가져오기</button>
       </div>
-      <div class="act-field">
-        <label for="activation-key-input">활성화 키</label>
-        <input type="text" id="activation-key-input" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off"
-               style="font-family:'JetBrains Mono',monospace; letter-spacing:0.12em;">
+
+      <!-- 신규 가입 Form -->
+      <div id="setup-signup-form" class="activation-form">
+        <div class="act-field">
+          <label for="signup-username">대화명</label>
+          <input type="text" id="signup-username" placeholder="사용할 닉네임 입력">
+        </div>
+        <div class="act-field">
+          <label for="signup-password">마스터 비밀번호</label>
+          <input type="password" id="signup-password" placeholder="비밀키 암호화용 비밀번호 설정">
+        </div>
+        <button class="btn-activate" id="btn-do-signup">신규 가입 완료</button>
       </div>
-      <div id="activation-error" class="activation-error hidden"></div>
-      <button class="btn-activate" id="btn-do-activate">활성화</button>
+
+      <!-- 기존 키 가져오기 Form -->
+      <div id="setup-import-form" class="activation-form hidden">
+        <div class="act-field">
+          <label for="import-username">대화명</label>
+          <input type="text" id="import-username" placeholder="사용할 닉네임 입력">
+        </div>
+        <div class="act-field">
+          <label for="import-password">새 마스터 비밀번호</label>
+          <input type="password" id="import-password" placeholder="키 암호화용 새 비밀번호 설정">
+        </div>
+        <div class="act-field">
+          <label for="import-key-json">기존 백업 키 (JSON 텍스트)</label>
+          <textarea id="import-key-json" placeholder='{"pub": "...", "priv": "..."}' style="min-height:80px; font-family:monospace; background:#1e1e1e; border:1px solid #3c3c3c; color:#f0f0f0; padding:8px; outline:none; font-size:0.75rem; resize:vertical;"></textarea>
+        </div>
+        <button class="btn-activate" id="btn-do-import">가져오기 완료</button>
+      </div>
     </div>
 
-    <div class="activation-links">
-      <a href="http://localhost:3000/register.html" target="_blank">홈페이지 가입하기 →</a>
-      <span class="sep">·</span>
-      <a href="http://localhost:3000/login.html" target="_blank">로그인</a>
+    <!-- 기존 가입자가 앱을 켰을 때: 로그인 잠금 해제 화면 -->
+    <div id="login-container" class="hidden">
+      <h1 class="activation-title">로컬 신원 잠금 해제</h1>
+      <p class="activation-desc" id="login-username-label" style="margin-bottom:16px;">
+        대화명 님의 신원 데이터가 감지되었습니다.
+      </p>
+      <div class="activation-form">
+        <div class="act-field">
+          <label for="login-password">마스터 비밀번호</label>
+          <input type="password" id="login-password" placeholder="마스터 비밀번호 입력" autocomplete="current-password">
+        </div>
+        <button class="btn-activate" id="btn-do-login">잠금 해제</button>
+      </div>
     </div>
+
+    <div id="activation-error" class="activation-error hidden" style="margin-top:12px;"></div>
   </div>
 </div>
+
 
 <!-- ═══════════════════════════════════════════════════
      MAIN APP SCREEN
@@ -448,6 +476,7 @@
 <script src="js/friendcode.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/signal.js"></script>
+<script src="js/signal_serverless.js"></script>
 <script src="js/p2p.js"></script>
 <script src="js/app.js"></script>
 <script>

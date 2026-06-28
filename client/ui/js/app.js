@@ -110,45 +110,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderRoomList();
   };
 
+
   const saveHistory = () =>
     tauriInvoke('save_secure_data', { filename: 'history.json', data: JSON.stringify(chatRooms) });
 
-  // ─── Activation Check ───────────────────────────────────
+  // ─── Local Onboarding & Login Check ────────────────────
   const checkActivation = async () => {
-    await AuthManager.init();
-    if (!AuthManager.isActivated()) {
-      screens.activation.classList.remove('hidden');
-      screens.main.classList.add('hidden');
-      return false;
+    const isSetup = await AuthManager.init();
+    screens.activation.classList.remove('hidden');
+    screens.main.classList.add('hidden');
+
+    if (isSetup) {
+      // 이미 설정된 계정 정보가 존재 -> 로그인 화면 표시
+      document.getElementById('setup-options-container').classList.add('hidden');
+      document.getElementById('login-container').classList.remove('hidden');
+      document.getElementById('login-username-label').textContent = `${AuthManager.getUsername()} 님의 신원 데이터가 감지되었습니다.`;
+    } else {
+      // 신규 실행 -> 가입 / 가져오기 선택화면 표시
+      document.getElementById('setup-options-container').classList.remove('hidden');
+      document.getElementById('login-container').classList.add('hidden');
     }
-    screens.activation.classList.add('hidden');
-    screens.main.classList.remove('hidden');
-    return true;
+    return false; // 로그인 완료 시 main으로 넘어감
   };
 
-  // ─── Activation Form ────────────────────────────────────
-  document.getElementById('btn-do-activate').addEventListener('click', async () => {
-    const serverUrl = document.getElementById('activation-server-url').value.trim();
-    const key = document.getElementById('activation-key-input').value.trim();
-    if (!serverUrl) return showActivationError('서버 URL을 입력하세요.');
-    if (!key) return showActivationError('활성화 키를 입력하세요.');
+  // Onboarding Tabs
+  document.getElementById('tab-setup-signup').addEventListener('click', () => {
+    document.getElementById('setup-signup-form').classList.remove('hidden');
+    document.getElementById('setup-import-form').classList.add('hidden');
+    document.getElementById('tab-setup-signup').className = 'btn btn-primary';
+    document.getElementById('tab-setup-import').className = 'btn btn-secondary';
+  });
 
-    await AuthManager.setServerUrl(serverUrl);
+  document.getElementById('tab-setup-import').addEventListener('click', () => {
+    document.getElementById('setup-signup-form').classList.add('hidden');
+    document.getElementById('setup-import-form').classList.remove('hidden');
+    document.getElementById('tab-setup-signup').className = 'btn btn-secondary';
+    document.getElementById('tab-setup-import').className = 'btn btn-primary';
+  });
 
-    // Ensure p2p is initialized to have a public key
-    if (!p2p.localPublicKeyBase64) await p2p.initialize();
+  // Action: Sign Up
+  document.getElementById('btn-do-signup').addEventListener('click', async () => {
+    const username = document.getElementById('signup-username').value.trim();
+    const password = document.getElementById('signup-password').value.trim();
+    if (!username) return showActivationError('대화명을 입력하세요.');
+    if (password.length < 4) return showActivationError('비밀번호는 최소 4자 이상이어야 합니다.');
 
-    const btn = document.getElementById('btn-do-activate');
+    const btn = document.getElementById('btn-do-signup');
     btn.disabled = true;
-    btn.textContent = '활성화 중...';
+    btn.textContent = '신원 생성 중...';
 
     try {
-      const result = await AuthManager.activate(key, p2p.localPublicKeyBase64);
-      myUsername = result.username;
+      await AuthManager.signUp(username, password);
+      myUsername = AuthManager.getUsername();
       myUsernameDisplay.textContent = myUsername;
       await saveConfig();
 
-      // Initialize signaling
+      // P2P/Signaling 초기화 및 구동
+      await initP2P();
       initSignaling();
 
       screens.activation.classList.add('hidden');
@@ -157,7 +175,67 @@ document.addEventListener('DOMContentLoaded', async () => {
       showActivationError(e.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = '활성화';
+      btn.textContent = '신규 가입 완료';
+    }
+  });
+
+  // Action: Key Import
+  document.getElementById('btn-do-import').addEventListener('click', async () => {
+    const username = document.getElementById('import-username').value.trim();
+    const password = document.getElementById('import-password').value.trim();
+    const keyJson = document.getElementById('import-key-json').value.trim();
+    if (!username) return showActivationError('대화명을 입력하세요.');
+    if (password.length < 4) return showActivationError('비밀번호는 최소 4자 이상이어야 합니다.');
+    if (!keyJson) return showActivationError('백업 키 JSON 텍스트를 입력하세요.');
+
+    const btn = document.getElementById('btn-do-import');
+    btn.disabled = true;
+    btn.textContent = '가져오는 중...';
+
+    try {
+      await AuthManager.signInWithImport(username, password, keyJson);
+      myUsername = AuthManager.getUsername();
+      myUsernameDisplay.textContent = myUsername;
+      await saveConfig();
+
+      await initP2P();
+      initSignaling();
+
+      screens.activation.classList.add('hidden');
+      screens.main.classList.remove('hidden');
+    } catch (e) {
+      showActivationError(e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '가져오기 완료';
+    }
+  });
+
+  // Action: Login (Unlock)
+  document.getElementById('btn-do-login').addEventListener('click', async () => {
+    const password = document.getElementById('login-password').value.trim();
+    if (!password) return showActivationError('비밀번호를 입력하세요.');
+
+    const btn = document.getElementById('btn-do-login');
+    btn.disabled = true;
+    btn.textContent = '잠금 해제 중...';
+
+    try {
+      await AuthManager.login(password);
+      myUsername = AuthManager.getUsername();
+      myUsernameDisplay.textContent = myUsername;
+      await saveConfig();
+
+      await initP2P();
+      initSignaling();
+
+      screens.activation.classList.add('hidden');
+      screens.main.classList.remove('hidden');
+    } catch (e) {
+      showActivationError(e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '잠금 해제';
     }
   });
 
@@ -168,7 +246,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(() => el.classList.add('hidden'), 4000);
   }
 
-  // ─── Init P2P ───────────────────────────────────────────
   const initP2P = async () => {
     p2p = new P2PMeshManager({
       username: myUsername,
@@ -178,7 +255,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       onChannelUpdate: handleChannelUpdate,
       onPeerUpdate: handlePeerUpdate,
     });
-    await p2p.initialize();
+    const identityKeyPair = typeof AuthManager.getDecryptedKeyPair === 'function'
+      ? AuthManager.getDecryptedKeyPair()
+      : null;
+    const publicKey = typeof AuthManager.getPublicKeyBase64 === 'function'
+      ? await AuthManager.getPublicKeyBase64()
+      : null;
+    await p2p.initialize(identityKeyPair, publicKey);
 
     // Show public key (identity code)
     const myCode = await FriendCode.generateMyFriendCode(p2p.localKeyPair.publicKey);
@@ -188,24 +271,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ─── Init Signaling ─────────────────────────────────────
   const initSignaling = () => {
     if (sigClient) sigClient.destroy();
-    sigClient = new SignalingClient(AuthManager.getServerUrl(), {
+
+    const serverUrl = AuthManager.getServerUrl?.() || '';
+    const useRemoteSignal = typeof serverUrl === 'string' && /^(wss?:\/\/)/.test(serverUrl);
+    const signalingOptions = {
       onConnected: (peerId) => {
         p2p.myPeerId = peerId;
         onlineIndicator.classList.add('online');
-        onlineIndicator.title = '서버 연결됨';
+        onlineIndicator.title = useRemoteSignal ? '시그널링 연결됨' : '로컬 시그널링 준비됨';
       },
       onDisconnected: () => {
         onlineIndicator.classList.remove('online');
-        onlineIndicator.title = '서버 연결 끊김 (재연결 중...)';
+        onlineIndicator.title = '시그널링 연결 끊김 (재연결 중...)';
       },
       onError: (err) => console.error('[Signal Error]', err),
-      onFriendRequest: handleFriendRequest,
-    });
+      username: myUsername,
+    };
+
+    sigClient = useRemoteSignal
+      ? new SignalingClient(serverUrl, signalingOptions)
+      : new ServerlessSignaling(signalingOptions);
+
     p2p.attachSignaling(sigClient);
     sigClient.connect(
-      AuthManager.getToken(),
+      p2p.myPeerId || crypto.randomUUID(),
       p2p.localPublicKeyBase64,
-      p2p.myPeerId || crypto.randomUUID()
+      myUsername
     );
   };
 
@@ -375,42 +466,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (password && password.length < 6) return alert('방 비번은 6자 이상이어야 합니다.');
 
     try {
-      const roomKeyHash = await CryptoHelper.sha256(roomKey);
-      const roomPassword = password ? `${roomKey}:${password}` : roomKey;
-
-      let roomData = null;
-      if (AuthManager.isActivated()) {
-        try {
-          roomData = await AuthManager.getRoom(roomKeyHash);
-        } catch (_) {}
-
-        if (!roomData) {
-          roomData = await AuthManager.createRoom(name, roomKeyHash, persistent);
-        }
-      }
-
-      const roomSalt = roomData?.roomSalt || Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2,'0')).join('');
-      const roomId = roomData?.roomId || roomKeyHash;
+      const roomId = await CryptoHelper.deriveRoomId(roomKey);
+      const roomSalt = await CryptoHelper.deriveRoomSalt(roomKey);
+      const roomChannels = [{ id: `${roomId.slice(0, 16)}-general`, name: '일반', position: 0 }];
 
       chatRooms[roomId] = {
         name,
-        channels: roomData?.channels || [{ id: 'default', name: '일반', position: 0 }],
+        channels: roomChannels,
         messages: {},
         persistent: !!persistent,
-        roomKeyHash,
+        roomKey: roomKey,
         roomSalt,
         roomSecretKey: roomKey,
         roomPassword: password || '',
       };
       activeRoomId = roomId;
-      activeChannelId = (roomData?.channels || [{ id: 'default' }])[0]?.id;
+      activeChannelId = roomChannels[0].id;
       saveHistory();
 
-      if (sigClient) {
+      if (p2p) {
         p2p.channels = chatRooms[roomId].channels;
         p2p.activeChannelId = activeChannelId;
-        await p2p.joinRoomWithPassword(roomKeyHash, roomPassword, roomSalt);
-        sigClient.joinRoom(roomKeyHash, activeChannelId);
+        await p2p.joinRoomWithCode(roomKey, name);
+        if (sigClient) {
+          sigClient.joinRoom(roomKey, p2p.roomId, p2p.roomSalt, name);
+        }
       }
 
       hideModal(modals.createRoom);
@@ -435,51 +515,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!roomKey) return alert('방 비밀키를 입력하세요.');
 
     try {
-      const roomKeyHash = await CryptoHelper.sha256(roomKey);
-      const roomPassword = password ? `${roomKey}:${password}` : roomKey;
-      let roomData = null;
-
-      if (AuthManager.isActivated()) {
-        try { roomData = await AuthManager.getRoom(roomKeyHash); } catch (_) {}
-      }
-
-      if (!roomData) {
-        alert('해당 방을 찾을 수 없습니다. 방 비밀번호를 확인하세요.');
-        return;
-      }
-
-      const roomId = roomData.roomId;
+      const roomId = await CryptoHelper.deriveRoomId(roomKey);
+      const roomSalt = await CryptoHelper.deriveRoomSalt(roomKey);
+      const roomName = `방 ${roomKey}`;
       if (!chatRooms[roomId]) {
         chatRooms[roomId] = {
-          name: roomData.name,
-          channels: roomData.channels || [],
+          name: roomName,
+          channels: [{ id: `${roomId.slice(0, 16)}-general`, name: '일반', position: 0 }],
           messages: {},
-          persistent: roomData.persistent,
-          roomKeyHash,
-          roomSalt: roomData.roomSalt,
+          persistent: false,
+          roomKey,
+          roomSalt,
           password,
         };
       }
 
       activeRoomId = roomId;
-      activeChannelId = (roomData.channels || [{ id: 'default' }])[0]?.id;
+      activeChannelId = chatRooms[roomId].channels[0]?.id;
       saveHistory();
 
-      p2p.channels = chatRooms[roomId].channels;
-      p2p.activeChannelId = activeChannelId;
-      await p2p.joinRoomWithPassword(roomKeyHash, password, roomData.roomSalt);
-
-      if (sigClient) sigClient.joinRoom(roomKeyHash, activeChannelId);
-
-      // Fetch persistent messages if enabled
-      if (roomData.persistent && activeChannelId && AuthManager.isActivated()) {
-        fetchPersistentMessages(activeChannelId);
+      if (p2p) {
+        p2p.channels = chatRooms[roomId].channels;
+        p2p.activeChannelId = activeChannelId;
+        await p2p.joinRoomWithPassword(roomKey, password, roomSalt);
+        if (sigClient) {
+          sigClient.joinRoom(roomKey, p2p.roomId, p2p.roomSalt, roomName);
+        }
       }
 
       hideModal(modals.joinByKey);
       renderRoomList();
       renderChannelList();
-      chatTitle.textContent = roomData.name;
+      chatTitle.textContent = roomName;
       welcomeScreen.classList.add('hidden');
       chatScreen.classList.remove('hidden');
     } catch (e) {
@@ -729,11 +796,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       const remotePubKeyStr = await CryptoHelper.exportPublicKey(remotePubKey);
       const targetKeyHash = await CryptoHelper.sha256(remotePubKeyStr);
 
-      // Generate offer
-      const offerPayload = { sdp: '서버 시그널링 사용', username: myUsername, publicKey: p2p.localPublicKeyBase64 };
-      sigClient?.sendFriendRequest(targetKeyHash, offerPayload);
-
-      alert('친구 요청을 전송했습니다. 상대방이 온라인이면 자동으로 연결됩니다.');
+      if (typeof sigClient?.sendFriendRequest === 'function') {
+        const offerPayload = { sdp: '서버 시그널링 사용', username: myUsername, publicKey: p2p.localPublicKeyBase64 };
+        sigClient.sendFriendRequest(targetKeyHash, offerPayload);
+        alert('친구 요청을 전송했습니다. 상대방이 온라인이면 자동으로 연결됩니다.');
+      } else {
+        alert('현재 로컬 모드에서는 친구 요청 전송이 지원되지 않습니다. 상대방에게 친구 코드를 공유해 직접 연결해 주세요.');
+      }
     } catch (e) { alert('오류: ' + e.message); }
   });
 

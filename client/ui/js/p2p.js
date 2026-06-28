@@ -70,7 +70,23 @@ class P2PMeshManager {
   }
 
   // ─── Initialize (load or generate long-term keypair) ─────
-  async initialize() {
+  async initialize(existingKeyPair = null, existingPublicKeyBase64 = null) {
+    if (existingKeyPair && existingPublicKeyBase64) {
+      this.localKeyPair = existingKeyPair;
+      this.localPublicKeyBase64 = existingPublicKeyBase64;
+      return;
+    }
+
+    const authManager = window.AuthManager || window.LocalIdentity;
+    if (authManager?.getDecryptedKeyPair) {
+      const authKeyPair = authManager.getDecryptedKeyPair();
+      if (authKeyPair?.publicKey && authKeyPair?.privateKey) {
+        this.localKeyPair = authKeyPair;
+        this.localPublicKeyBase64 = await CryptoHelper.exportPublicKey(authKeyPair.publicKey);
+        return;
+      }
+    }
+
     const invoke = window.__TAURI__?.core?.invoke;
     const saveKp = async (pub, privJwk) => {
       const data = JSON.stringify({ pub, priv: privJwk });
@@ -159,6 +175,17 @@ class P2PMeshManager {
     // 시그널링 클라이언트에게 방 입장 요청 (roomId = 공개 식별자)
     if (this.signalingClient?.joinRoom) {
       await this.signalingClient.joinRoom(roomCode, this.roomId, this.roomSalt, roomName || roomCode);
+    }
+  }
+
+  async joinRoomWithPassword(roomCode, roomPassword, roomSalt = '') {
+    this.roomCode = roomCode;
+    this.roomSalt = roomSalt || await CryptoHelper.deriveRoomSalt(roomCode);
+    this.roomId   = await CryptoHelper.deriveRoomId(roomCode);
+    this.groupKey = await CryptoHelper.deriveRoomGroupKey(roomCode, this.roomSalt);
+    this.channelKeys = {};
+    if (this.signalingClient?.joinRoom) {
+      await this.signalingClient.joinRoom(roomCode, this.roomId, this.roomSalt, roomPassword || roomCode);
     }
   }
 
