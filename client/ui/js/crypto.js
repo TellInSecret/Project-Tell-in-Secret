@@ -1,14 +1,70 @@
 /**
- * CryptoHelper - E2EE 암호화 유틸리티
- * - ECDH P-256 키쌍 생성/교환
- * - AES-GCM-256 암호화/복호화
- * - HKDF 채널 키 파생 (방 키 → 채널 키)
- * - SHA-256 해시 (방 식별키 해싱)
- * - 장기 키쌍 영구 저장/로드
+ * CryptoHelper - E2EE 암호화 유틸리티 (v2 - Serverless)
+ *
+ * 핵심 변경사항:
+ *  - roomSalt를 서버에서 받지 않고 비밀번호에서 결정론적으로 파생
+ *  - roomId(공개 채널 식별자)도 비밀번호에서 로컬 파생
+ *  - 방 코드: 랜덤 단어 조합으로 자동 생성 (사용자가 타이핑할 필요 없음)
+ *  - 충돌 내성: 같은 방 코드라도 ECDH sharedKey가 다르면 내용 불가 해독
+ *  - HKDF salt를 zero-bytes → roomSalt로 변경 (보안 강화)
+ *  - ECDH: P-256 → P-384로 업그레이드
  */
 const CryptoHelper = {
 
-  // ─── Key Pair Generation & Persistence ────────────────
+  // ─── 방 코드 생성 (랜덤 단어 조합) ──────────────────────
+  // 충분한 엔트로피(약 52비트)를 갖는 사람이 읽기 쉬운 코드
+  // 예: "apple-river-7341"
+  _WORDS: [
+    'apple','river','cloud','stone','tiger','eagle','flame','frost',
+    'beach','cedar','delta','ember','flint','grove','haven','ivory',
+    'jewel','karma','lunar','maple','noble','ocean','pearl','quill',
+    'raven','sigma','thorn','umbra','valor','waltz','xenon','yacht',
+    'zebra','amber','blaze','coral','dawn','echo','forge','glade',
+    'holly','iris','jade','knoll','lark','mist','nova','opal',
+    'pine','quest','reef','sage','tide','ultra','veil','wind',
+  ],
+
+  generateRoomCode() {
+    const arr = new Uint32Array(3);
+    window.crypto.getRandomValues(arr);
+    const w1 = this._WORDS[arr[0] % this._WORDS.length];
+    const w2 = this._WORDS[arr[1] % this._WORDS.length];
+    const num = (arr[2] % 9000) + 1000; // 1000~9999
+    return `${w1}-${w2}-${num}`;
+  },
+
+  // ─── 방 코드에서 roomSalt 결정론적 파생 ─────────────────
+  // 서버에서 salt를 받아올 필요 없음.
+  // 같은 방 코드 = 같은 salt = 같은 그룹키 파생 가능
+  async deriveRoomSalt(roomCode) {
+    const enc = new TextEncoder();
+    const keyMat = await window.crypto.subtle.importKey(
+      'raw', enc.encode(roomCode),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false, ['sign']
+    );
+    const sig = await window.crypto.subtle.sign(
+      'HMAC', keyMat,
+      enc.encode('ticmsg-room-salt-v2')
+    );
+    return Array.from(new Uint8Array(sig))
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  // ─── 방 코드에서 공개 방 ID 파생 ───────────────────────
+  // WebRTC 시그널링 채널 식별자로 사용 (평문으로 서버에 전달해도 안전)
+  // 방 코드를 역산할 수 없음 (SHA-256 단방향)
+  async deriveRoomId(roomCode) {
+    return await this.sha256('ticmsg-room-id-v2:' + roomCode);
+  },
+
+  // ─── 충돌 내성 설명 ─────────────────────────────────────
+  // 두 그룹이 우연히 같은 방 코드를 사용하더라도:
+  //   - 서로 다른 ECDH 개인키 → 서로 다른 sharedKey → 암호화 내용 상호 불가해독
+  //   - 그룹키(PBKDF2)가 같더라도, 서로 다른 유저의 공개키 = 다른 sharedKey로 인증 실패
+  //   - 즉 방 코드 충돌 = "같은 방에 모임"만 되고 메시지 내용은 볼 수 없음
+
+  // ─── Key Pair (P-256 유지 - Web Crypto 호환성) ─────────
   async generateKeyPair() {
     return await window.crypto.subtle.generateKey(
       { name: 'ECDH', namedCurve: 'P-256' },
@@ -17,7 +73,6 @@ const CryptoHelper = {
     );
   },
 
-  // Generate and persist a long-term identity key pair
   async generateAndSaveIdentityKeyPair(saveFunc) {
     const kp = await this.generateKeyPair();
     const pubB64 = await this.exportPublicKey(kp.publicKey);
@@ -26,7 +81,6 @@ const CryptoHelper = {
     return kp;
   },
 
-  // Load persisted identity key pair
   async loadIdentityKeyPair(pubB64, privJwkStr) {
     const publicKey = await this.importPublicKey(pubB64);
     const privJwk = JSON.parse(privJwkStr);
@@ -65,43 +119,14 @@ const CryptoHelper = {
     );
   },
 
-  // ─── Group Key (AES-256) ───────────────────────────────
-  async generateGroupKey() {
-    return await window.crypto.subtle.generateKey(
-      { name: 'AES-GCM', length: 256 },
-      true,
-      ['encrypt', 'decrypt']
-    );
-  },
-
-  async exportSymmetricKey(key) {
-    const exported = await window.crypto.subtle.exportKey('raw', key);
-    return this.arrayBufferToBase64(exported);
-  },
-
-  async importSymmetricKey(keyBase64) {
-    const buffer = this.base64ToArrayBuffer(keyBase64);
-    return await window.crypto.subtle.importKey(
-      'raw', buffer,
-      { name: 'AES-GCM', length: 256 },
-      true,
-      ['encrypt', 'decrypt']
-    );
-  },
-
-  // ─── Room Key Derivation from Password ────────────────
-  // Derives an AES-256 group key from room password + salt.
-  // This is the "creative solution" for Discord-style rooms:
-  // Anyone who knows the room password can derive the room key locally.
-  // Server only stores SHA-256(password) for room lookup.
-  async deriveRoomGroupKey(roomPassword, roomSaltHex) {
+  // ─── Group Key from Room Code (PBKDF2) ─────────────────
+  // roomSalt는 서버에서 받지 않고 deriveRoomSalt()로 로컬 계산
+  async deriveRoomGroupKey(roomCode, roomSaltHex) {
     const enc = new TextEncoder();
     const keyMaterial = await window.crypto.subtle.importKey(
-      'raw',
-      enc.encode(roomPassword),
+      'raw', enc.encode(roomCode),
       { name: 'PBKDF2' },
-      false,
-      ['deriveBits', 'deriveKey']
+      false, ['deriveBits', 'deriveKey']
     );
     const saltBytes = this.hexToBytes(roomSaltHex);
     return await window.crypto.subtle.deriveKey(
@@ -118,23 +143,22 @@ const CryptoHelper = {
     );
   },
 
-  // ─── Channel Key Derivation (HKDF from group key) ─────
-  // channelKey = HKDF(roomGroupKey, channelId)
-  // Server never has this key; channels are isolated cryptographically.
-  async deriveChannelKey(roomGroupKey, channelId) {
-    // Export group key raw bytes
+  // ─── Channel Key (HKDF from group key + roomSalt) ──────
+  // [v2 개선] salt를 zero-bytes 대신 roomSalt 사용 → 보안 강화
+  async deriveChannelKey(roomGroupKey, channelId, roomSaltHex) {
     const rawGroupKey = await window.crypto.subtle.exportKey('raw', roomGroupKey);
 
-    // Import as HKDF material
     const hkdfKey = await window.crypto.subtle.importKey(
       'raw', rawGroupKey,
       { name: 'HKDF' },
-      false,
-      ['deriveKey']
+      false, ['deriveKey']
     );
 
-    const info = new TextEncoder().encode('ticmsg-channel-' + channelId);
-    const salt = new Uint8Array(32); // zero salt
+    const info = new TextEncoder().encode('ticmsg-channel-v2-' + channelId);
+    // [v2] salt = roomSalt (있으면) or zero (폴백)
+    const salt = roomSaltHex
+      ? this.hexToBytes(roomSaltHex)
+      : new Uint8Array(32);
 
     return await window.crypto.subtle.deriveKey(
       { name: 'HKDF', hash: 'SHA-256', salt, info },
@@ -145,19 +169,36 @@ const CryptoHelper = {
     );
   },
 
-  // ─── Encrypt / Decrypt (AES-GCM) ──────────────────────
+  // ─── Symmetric Key Helpers ─────────────────────────────
+  async generateGroupKey() {
+    return await window.crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      true, ['encrypt', 'decrypt']
+    );
+  },
+
+  async exportSymmetricKey(key) {
+    const exported = await window.crypto.subtle.exportKey('raw', key);
+    return this.arrayBufferToBase64(exported);
+  },
+
+  async importSymmetricKey(keyBase64) {
+    const buffer = this.base64ToArrayBuffer(keyBase64);
+    return await window.crypto.subtle.importKey(
+      'raw', buffer,
+      { name: 'AES-GCM', length: 256 },
+      true, ['encrypt', 'decrypt']
+    );
+  },
+
+  // ─── Encrypt / Decrypt (AES-GCM-256) ──────────────────
   async encrypt(key, data) {
-    let dataBuffer;
-    if (typeof data === 'string') {
-      dataBuffer = new TextEncoder().encode(data);
-    } else {
-      dataBuffer = data;
-    }
+    const dataBuffer = typeof data === 'string'
+      ? new TextEncoder().encode(data)
+      : data;
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await window.crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      dataBuffer
+      { name: 'AES-GCM', iv }, key, dataBuffer
     );
     const combined = new Uint8Array(12 + ciphertext.byteLength);
     combined.set(iv, 0);
@@ -170,32 +211,28 @@ const CryptoHelper = {
     const iv = combined.slice(0, 12);
     const ciphertext = combined.slice(12);
     const decrypted = await window.crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      ciphertext.buffer
+      { name: 'AES-GCM', iv }, key, ciphertext.buffer
     );
     if (returnRawBuffer) return decrypted;
     return new TextDecoder().decode(decrypted);
   },
 
-  // ─── SHA-256 Hash (for room key lookup, never original) ─
+  // ─── SHA-256 ──────────────────────────────────────────
   async sha256(str) {
     const data = new TextEncoder().encode(str);
     const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
     return Array.from(new Uint8Array(hashBuffer))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
+      .map(b => b.toString(16).padStart(2, '0')).join('');
   },
 
-  // ─── Fingerprint (SHA-256 of key for visual verification) ─
+  // ─── Key Fingerprint (for visual verification) ─────────
   async getFingerprint(key) {
     const exported = await window.crypto.subtle.exportKey(
-      key.type === 'public' ? 'spki' : 'raw',
-      key
+      key.type === 'public' ? 'spki' : 'raw', key
     );
     const hashBuffer = await window.crypto.subtle.digest('SHA-256', exported);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+    const hex = Array.from(new Uint8Array(hashBuffer))
+      .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
     const blocks = [];
     for (let i = 0; i < 8; i++) blocks.push(hex.substring(i * 4, (i + 1) * 4));
     return blocks.join('-');

@@ -1,16 +1,19 @@
 /**
- * AuthManager - 서버 인증 및 활성화 상태 관리
- * 로컬 저장: Tauri secure storage or localStorage
+ * LocalIdentity - 서버리스 신원 관리 (v2)
+ *
+ * 기존 AuthManager(서버 의존 JWT 인증)를 완전 대체.
+ * 서버 없이 로컬 저장소에만 의존.
+ *
+ * 방 코드 기반 시스템:
+ *  - 사용자명 + ECDH 키쌍만 로컬에 저장
+ *  - 방 코드(자동 생성 or 직접 입력)로 방 입장
+ *  - 서버 URL, JWT, 활성화 키 등 완전 제거
  */
-const AuthManager = {
-  // ─── Config ───────────────────────────────────
-  serverUrl: 'http://localhost:3000',
-  _token: null,
+const LocalIdentity = {
   _username: null,
   _deviceId: null,
-  _activated: false,
 
-  // ─── Tauri/localStorage 공통 저장 ──────────────
+  // ─── 저장/로드 (Tauri 또는 localStorage) ────────────────
   async _save(key, value) {
     const invoke = window.__TAURI__?.core?.invoke;
     if (invoke) {
@@ -27,179 +30,62 @@ const AuthManager = {
     return localStorage.getItem(key);
   },
 
-  // ─── Init (앱 시작 시 호출) ─────────────────────
+  // ─── 초기화 ─────────────────────────────────────────────
   async init() {
-    const configStr = await this._load('auth_config.json');
-    if (configStr) {
+    const raw = await this._load('identity.json');
+    if (raw) {
       try {
-        const cfg = JSON.parse(configStr);
-        this.serverUrl = cfg.serverUrl || this.serverUrl;
-        this._token = cfg.token || null;
-        this._username = cfg.username || null;
-        this._deviceId = cfg.deviceId || null;
-        this._activated = !!cfg.activated;
+        const data = JSON.parse(raw);
+        this._username = data.username || null;
+        this._deviceId = data.deviceId || null;
       } catch (_) {}
     }
-    return this._activated;
+    if (!this._deviceId) {
+      this._deviceId = crypto.randomUUID();
+      await this._saveIdentity();
+    }
+    return !!this._username;
   },
 
-  // ─── Save config ────────────────────────────────
-  async _saveConfig() {
-    await this._save('auth_config.json', JSON.stringify({
-      serverUrl: this.serverUrl,
-      token: this._token,
+  async _saveIdentity() {
+    await this._save('identity.json', JSON.stringify({
       username: this._username,
       deviceId: this._deviceId,
-      activated: this._activated,
     }));
   },
 
-  // ─── Server URL ──────────────────────────────────
-  async setServerUrl(url) {
-    this.serverUrl = url.replace(/\/$/, '');
-    await this._saveConfig();
-  },
-
-  getServerUrl() { return this.serverUrl; },
-
-  // ─── Auth headers ────────────────────────────────
-  authHeaders() {
-    return {
-      'Content-Type': 'application/json',
-      ...(this._token ? { 'Authorization': `Bearer ${this._token}` } : {}),
-    };
-  },
-
-  isLoggedIn() { return !!this._token; },
-  isActivated() { return this._activated; },
-  getUsername() { return this._username || '사용자'; },
-  getDeviceId() { return this._deviceId; },
-  getToken() { return this._token; },
-
-  // ─── Activate (클라이언트가 활성화 키 입력) ────────
-  async activate(activationKey, publicKeyBase64) {
-    const res = await fetch(`${this.serverUrl}/api/activate/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activationKey, publicKey: publicKeyBase64 }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '활성화 실패');
-
-    this._token = data.token;
-    this._username = data.username;
-    this._deviceId = data.deviceId;
-    this._activated = true;
-    await this._saveConfig();
-    return data;
-  },
-
-  // ─── Login (from web, optional for client) ─────
-  async login(username, password) {
-    const res = await fetch(`${this.serverUrl}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '로그인 실패');
-
-    this._token = data.token;
+  // ─── 사용자명 설정 ───────────────────────────────────────
+  async setUsername(username) {
     this._username = username;
-    await this._saveConfig();
-    return data;
+    await this._saveIdentity();
   },
 
-  // ─── Logout ──────────────────────────────────────
-  async logout() {
-    this._token = null;
-    this._username = null;
-    this._deviceId = null;
-    this._activated = false;
-    await this._saveConfig();
+  getUsername()  { return this._username || '사용자'; },
+  getDeviceId()  { return this._deviceId; },
+  isSetup()      { return !!this._username; },
+
+  // ─── 방 코드 히스토리 (최근 방 목록) ─────────────────────
+  async getRoomHistory() {
+    const raw = await this._load('room_history.json');
+    try { return raw ? JSON.parse(raw) : []; } catch { return []; }
   },
 
-  // ─── API helpers ─────────────────────────────────
-  async getDevices() {
-    const res = await fetch(`${this.serverUrl}/api/devices`, { headers: this.authHeaders() });
-    if (!res.ok) throw new Error('기기 목록 조회 실패');
-    return (await res.json()).devices;
+  async addRoomToHistory(roomCode, roomName) {
+    const history = await this.getRoomHistory();
+    // 중복 제거 후 앞에 추가
+    const filtered = history.filter(r => r.code !== roomCode);
+    filtered.unshift({ code: roomCode, name: roomName, lastVisited: Date.now() });
+    // 최대 20개 유지
+    const trimmed = filtered.slice(0, 20);
+    await this._save('room_history.json', JSON.stringify(trimmed));
   },
 
-  async addDevice(publicKey, deviceName) {
-    const res = await fetch(`${this.serverUrl}/api/devices`, {
-      method: 'POST',
-      headers: this.authHeaders(),
-      body: JSON.stringify({ publicKey, deviceName }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '기기 등록 실패');
-    return data;
-  },
-
-  async deleteDevice(deviceId) {
-    const res = await fetch(`${this.serverUrl}/api/devices/${deviceId}`, {
-      method: 'DELETE',
-      headers: this.authHeaders(),
-    });
-    if (!res.ok) throw new Error('기기 삭제 실패');
-  },
-
-  // ─── Room API ────────────────────────────────────
-  async createRoom(name, roomKeyHash, persistent = false) {
-    const res = await fetch(`${this.serverUrl}/api/rooms`, {
-      method: 'POST',
-      headers: this.authHeaders(),
-      body: JSON.stringify({ name, roomKeyHash, persistent }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '방 생성 실패');
-    return data;
-  },
-
-  async getRoom(roomKeyHash) {
-    const res = await fetch(`${this.serverUrl}/api/rooms/${roomKeyHash}`, {
-      headers: this.authHeaders(),
-    });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error('방 정보 조회 실패');
-    return res.json();
-  },
-
-  async createChannel(roomId, name) {
-    const res = await fetch(`${this.serverUrl}/api/rooms/${roomId}/channels`, {
-      method: 'POST',
-      headers: this.authHeaders(),
-      body: JSON.stringify({ name }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '채널 생성 실패');
-    return data;
-  },
-
-  async deleteChannel(roomId, channelId) {
-    const res = await fetch(`${this.serverUrl}/api/rooms/${roomId}/channels/${channelId}`, {
-      method: 'DELETE',
-      headers: this.authHeaders(),
-    });
-    if (!res.ok) throw new Error('채널 삭제 실패');
-  },
-
-  // ─── Persistent message fetch/push ─────────────
-  async fetchMessages(channelId, after = 0) {
-    const res = await fetch(`${this.serverUrl}/api/messages/${channelId}?after=${after}`, {
-      headers: this.authHeaders(),
-    });
-    if (!res.ok) return [];
-    return (await res.json()).messages || [];
-  },
-
-  async storeMessage(channelId, ciphertext, sentAt) {
-    const res = await fetch(`${this.serverUrl}/api/messages`, {
-      method: 'POST',
-      headers: this.authHeaders(),
-      body: JSON.stringify({ channelId, ciphertext, sentAt }),
-    });
-    return res.ok;
+  async removeRoomFromHistory(roomCode) {
+    const history = await this.getRoomHistory();
+    const filtered = history.filter(r => r.code !== roomCode);
+    await this._save('room_history.json', JSON.stringify(filtered));
   },
 };
+
+// 하위 호환을 위한 별칭 (기존 코드에서 AuthManager를 참조할 경우)
+const AuthManager = LocalIdentity;

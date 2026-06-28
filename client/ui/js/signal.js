@@ -1,39 +1,46 @@
 /**
- * SignalingClient - WebSocket 기반 서버 시그널링
- * 서버는 WebRTC SDP/ICE 중계만 담당.
- * 실제 채팅 데이터는 직접 P2P DataChannel로 전송.
+ * SignalingClient v2 - 경량 WebSocket 시그널링 클라이언트
+ *
+ * v1 대비 변경:
+ *  - JWT 인증 제거 (auth 핸드셰이크 없음)
+ *  - roomKeyHash → roomId (클라이언트가 직접 파생한 SHA-256)
+ *  - 서버 메시지 저장 기능 제거 (영구 저장 없음)
+ *  - 친구 요청 서버 릴레이 제거 (직접 P2P로 처리)
+ *  - ServerlessSignaling과 동일한 인터페이스 유지
  */
 class SignalingClient {
   constructor(serverUrl, options = {}) {
-    this.wsUrl = serverUrl.replace(/^http/, 'ws') + '/';
-    this.ws = null;
-    this.connected = false;
-    this.reconnectDelay = 2000;
+    this.wsUrl = serverUrl.replace(/^http/, 'ws').replace(/\/?$/, '/');
+    this.ws    = null;
+    this.connected       = false;
+    this.reconnectDelay  = 2000;
     this.maxReconnectDelay = 30000;
     this._reconnectTimer = null;
-    this._destroyed = false;
+    this._destroyed      = false;
 
     // Callbacks
-    this.onConnected = options.onConnected || (() => {});
+    this.onConnected    = options.onConnected    || (() => {});
     this.onDisconnected = options.onDisconnected || (() => {});
-    this.onRoomJoined = options.onRoomJoined || (() => {});
-    this.onPeerJoined = options.onPeerJoined || (() => {});
-    this.onPeerLeft = options.onPeerLeft || (() => {});
-    this.onSignal = options.onSignal || (() => {});
-    this.onFriendRequest = options.onFriendRequest || (() => {});
-    this.onError = options.onError || (() => {});
+    this.onRoomJoined   = options.onRoomJoined   || (() => {});
+    this.onPeerJoined   = options.onPeerJoined   || (() => {});
+    this.onPeerLeft     = options.onPeerLeft     || (() => {});
+    this.onSignal       = options.onSignal       || (() => {});
+    this.onError        = options.onError        || (() => {});
 
     // State
-    this.myPeerId = null;
-    this._pendingRoom = null;
+    this.myPeerId   = null;
+    this._peerId    = null;
+    this._publicKey = null;
+    this._username  = null;
+    this._pendingRoom = null;  // { roomCode, roomId, roomSalt, roomName }
   }
 
-  // ─── Connect ──────────────────────────────────────
-  connect(token, publicKeyBase64, peerId) {
+  // ─── 연결 ──────────────────────────────────────────────
+  connect(peerId, publicKeyBase64, username) {
     if (this._destroyed) return;
-    this._token = token;
+    this._peerId    = peerId;
     this._publicKey = publicKeyBase64;
-    this._peerId = peerId;
+    this._username  = username || '사용자';
     this._openSocket();
   }
 
@@ -48,13 +55,16 @@ class SignalingClient {
 
     this.ws.onopen = () => {
       this.reconnectDelay = 2000;
-      // Authenticate immediately
-      this._send({
-        type: 'auth',
-        token: this._token,
-        publicKey: this._publicKey,
-        peerId: this._peerId,
-      });
+      this.connected = true;
+      this.myPeerId  = this._peerId;
+      this.onConnected(this._peerId);
+
+      // 재연결 시 방 재입장
+      if (this._pendingRoom) {
+        const r = this._pendingRoom;
+        this._pendingRoom = null;
+        this.joinRoom(r.roomCode, r.roomId, r.roomSalt, r.roomName);
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -65,14 +75,12 @@ class SignalingClient {
 
     this.ws.onclose = () => {
       this.connected = false;
-      this.myPeerId = null;
+      this.myPeerId  = null;
       this.onDisconnected();
       this._scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
-      // onerror always precedes onclose, nothing to do here
-    };
+    this.ws.onerror = () => {};
   }
 
   _scheduleReconnect() {
@@ -86,45 +94,31 @@ class SignalingClient {
 
   _handleMessage(msg) {
     switch (msg.type) {
-      case 'auth_ok':
-        this.connected = true;
-        this.myPeerId = msg.peerId;
-        this.onConnected(msg.peerId);
-        // Re-join room if we were in one before reconnect
-        if (this._pendingRoom) {
-          const { roomKeyHash, channelId } = this._pendingRoom;
-          this._pendingRoom = null;
-          this.joinRoom(roomKeyHash, channelId);
-        }
+      case 'joined': {
+        // 서버가 피어 목록과 함께 입장 확인
+        const room = this._currentRoom;
+        if (!room) return;
+        this.onRoomJoined({
+          roomId:     room.roomId,
+          roomName:   room.roomName,
+          roomSalt:   room.roomSalt,
+          persistent: false,
+          channels:   room.channels || [{ id: room.roomId.slice(0, 16) + '-general', name: '일반', position: 0 }],
+          peers:      msg.peers || [],
+        });
         break;
-
-      case 'auth_error':
-        this.onError('인증 오류: ' + msg.error);
-        this.destroy();
-        break;
-
-      case 'room_joined':
-        this.onRoomJoined(msg);
-        break;
-
+      }
       case 'peer_joined':
         this.onPeerJoined(msg);
         break;
-
       case 'peer_left':
         this.onPeerLeft(msg);
         break;
-
       case 'signal':
         this.onSignal(msg);
         break;
-
-      case 'friend_request':
-        this.onFriendRequest(msg);
-        break;
-
       case 'error':
-        this.onError(msg.error);
+        this.onError(msg.error || '서버 오류');
         break;
     }
   }
@@ -135,42 +129,58 @@ class SignalingClient {
     }
   }
 
-  // ─── Public API ──────────────────────────────────
+  // ─── 공개 API ───────────────────────────────────────────
 
-  joinRoom(roomKeyHash, channelId = null) {
+  /**
+   * 방 입장.
+   * @param {string} roomCode  - 방 코드 (비밀, 서버에 전달 안 함)
+   * @param {string} roomId    - SHA-256(방코드) (공개 식별자)
+   * @param {string} roomSalt  - 로컬 파생 salt
+   * @param {string} roomName  - 방 표시 이름
+   */
+  joinRoom(roomCode, roomId, roomSalt, roomName = '') {
     if (!this.connected) {
-      // Queue for after reconnect
-      this._pendingRoom = { roomKeyHash, channelId };
+      this._pendingRoom = { roomCode, roomId, roomSalt, roomName };
       return;
     }
-    this._send({ type: 'join_room', roomKeyHash, channelId });
+
+    // 채널 정보는 로컬에서 계산
+    const defaultChannelId = roomId.slice(0, 16) + '-general';
+    this._currentRoom = {
+      roomId,
+      roomName: roomName || roomCode,
+      roomSalt,
+      channels: [{ id: defaultChannelId, name: '일반', position: 0 }],
+    };
+
+    // 서버에는 roomId(공개 해시)만 전달 — 방 코드(비밀)는 절대 전달 안 함
+    this._send({
+      type:      'join',
+      roomId,
+      peerId:    this._peerId,
+      username:  this._username,
+      publicKey: this._publicKey,
+    });
   }
 
   leaveRoom() {
     this._pendingRoom = null;
-    this._send({ type: 'leave_room' });
+    this._currentRoom = null;
+    this._send({ type: 'leave' });
   }
 
   switchChannel(channelId) {
-    this._send({ type: 'switch_channel', channelId });
+    // 서버리스 채널 전환: 클라이언트 로컬로만 처리
   }
 
-  // Send WebRTC signal to a specific peer (via server relay)
   sendSignal(targetPeerId, payload) {
     this._send({ type: 'signal', targetPeerId, payload });
   }
 
-  // Send friend request via server relay
-  sendFriendRequest(targetPublicKeyHash, payload) {
-    this._send({ type: 'friend_request', targetPublicKeyHash, payload });
-  }
+  // 영구 저장 없음 (no-op)
+  storeMessage() {}
 
-  // Push message to server (persistent offline storage)
-  storeMessage(channelId, ciphertext, sentAt) {
-    this._send({ type: 'store_message', channelId, ciphertext, sentAt });
-  }
-
-  // ─── Destroy ─────────────────────────────────────
+  // ─── 해제 ───────────────────────────────────────────────
   destroy() {
     this._destroyed = true;
     clearTimeout(this._reconnectTimer);
