@@ -100,78 +100,30 @@
 </svg>
 
 <!-- ═══════════════════════════════════════════════════
-     ACTIVATION SCREEN (최초 실행 / 미활성화 -> 로컬 로그인 / 가입 화면)
- ═══════════════════════════════════════════════════ -->
+     ACTIVATION SCREEN (최초 실행 / 미활성화)
+═══════════════════════════════════════════════════ -->
 <div id="screen-activation" class="activation-overlay">
   <div class="activation-box">
     <div class="activation-logo">
       <svg class="activation-logo-icon"><use href="#icon-shield-lock"/></svg>
       <span>TicMsg</span>
     </div>
+    <h1 class="activation-title">시작하기</h1>
+    <p class="activation-desc">
+      서버 없이 P2P로 직접 연결되는 종단간 암호화 메신저입니다.<br>
+      사용할 이름만 입력하면 바로 시작할 수 있습니다.
+    </p>
 
-    <!-- 신규 실행 시: 가입 / 가져오기 선택화면 -->
-    <div id="setup-options-container">
-      <h1 class="activation-title">신원 설정 (최초 실행)</h1>
-      <p class="activation-desc" style="margin-bottom:16px;">
-        보안 P2P 메신저 사용을 위해 신원을 생성하거나 가져오세요.<br>
-        모든 정보는 로컬에 안전하게 암호화되어 저장됩니다.
-      </p>
-      
-      <div class="tab-buttons" style="display:flex; gap:10px; margin-bottom:16px;">
-        <button class="btn btn-primary" id="tab-setup-signup">새 신원 가입</button>
-        <button class="btn btn-secondary" id="tab-setup-import">기존 키 가져오기</button>
+    <div class="activation-form">
+      <div class="act-field">
+        <label for="activation-username-input">사용자명</label>
+        <input type="text" id="activation-username-input" placeholder="이름을 입력하세요" autocomplete="off" maxlength="20">
       </div>
-
-      <!-- 신규 가입 Form -->
-      <div id="setup-signup-form" class="activation-form">
-        <div class="act-field">
-          <label for="signup-username">대화명</label>
-          <input type="text" id="signup-username" placeholder="사용할 닉네임 입력">
-        </div>
-        <div class="act-field">
-          <label for="signup-password">마스터 비밀번호</label>
-          <input type="password" id="signup-password" placeholder="비밀키 암호화용 비밀번호 설정">
-        </div>
-        <button class="btn-activate" id="btn-do-signup">신규 가입 완료</button>
-      </div>
-
-      <!-- 기존 키 가져오기 Form -->
-      <div id="setup-import-form" class="activation-form hidden">
-        <div class="act-field">
-          <label for="import-username">대화명</label>
-          <input type="text" id="import-username" placeholder="사용할 닉네임 입력">
-        </div>
-        <div class="act-field">
-          <label for="import-password">새 마스터 비밀번호</label>
-          <input type="password" id="import-password" placeholder="키 암호화용 새 비밀번호 설정">
-        </div>
-        <div class="act-field">
-          <label for="import-key-json">기존 백업 키 (JSON 텍스트)</label>
-          <textarea id="import-key-json" placeholder='{"pub": "...", "priv": "..."}' style="min-height:80px; font-family:monospace; background:#1e1e1e; border:1px solid #3c3c3c; color:#f0f0f0; padding:8px; outline:none; font-size:0.75rem; resize:vertical;"></textarea>
-        </div>
-        <button class="btn-activate" id="btn-do-import">가져오기 완료</button>
-      </div>
+      <div id="activation-error" class="activation-error hidden"></div>
+      <button class="btn-activate" id="btn-do-activate">시작하기</button>
     </div>
-
-    <!-- 기존 가입자가 앱을 켰을 때: 로그인 잠금 해제 화면 -->
-    <div id="login-container" class="hidden">
-      <h1 class="activation-title">로컬 신원 잠금 해제</h1>
-      <p class="activation-desc" id="login-username-label" style="margin-bottom:16px;">
-        대화명 님의 신원 데이터가 감지되었습니다.
-      </p>
-      <div class="activation-form">
-        <div class="act-field">
-          <label for="login-password">마스터 비밀번호</label>
-          <input type="password" id="login-password" placeholder="마스터 비밀번호 입력" autocomplete="current-password">
-        </div>
-        <button class="btn-activate" id="btn-do-login">잠금 해제</button>
-      </div>
-    </div>
-
-    <div id="activation-error" class="activation-error hidden" style="margin-top:12px;"></div>
   </div>
 </div>
-
 
 <!-- ═══════════════════════════════════════════════════
      MAIN APP SCREEN
@@ -446,8 +398,6 @@
     <div class="modal-body">
       <label for="settings-username">대화명</label>
       <input type="text" id="settings-username" placeholder="대화명 입력">
-      <label for="settings-server-url">서버 주소</label>
-      <input type="url" id="settings-server-url" placeholder="http://localhost:3000">
       <button class="btn btn-primary btn-full" id="btn-save-settings">저장</button>
     </div>
   </div>
@@ -472,10 +422,11 @@
 <!-- ═══════════════════════════════════════════════════
      SCRIPTS
 ═══════════════════════════════════════════════════ -->
+<!-- PeerJS 공개 브로커 라이브러리 (서버리스 P2P 시그널링용) -->
+<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
 <script src="js/crypto.js"></script>
 <script src="js/friendcode.js"></script>
 <script src="js/auth.js"></script>
-<script src="js/signal.js"></script>
 <script src="js/signal_serverless.js"></script>
 <script src="js/p2p.js"></script>
 <script src="js/app.js"></script>
@@ -486,37 +437,6 @@
     const wb2 = document.getElementById('btn-join-room-welcome');
     if (wb1) wb1.addEventListener('click', () => document.getElementById('btn-create-room').click());
     if (wb2) wb2.addEventListener('click', () => document.getElementById('btn-join-room').click());
-
-    // Public key display in activation screen
-    (async () => {
-      // Wait for p2p to initialize (app.js runs first)
-      const tryShow = async () => {
-        const el = document.getElementById('activation-pubkey');
-        const invoke = window.__TAURI__?.core?.invoke;
-        let stored = null;
-        if (invoke) {
-          try { stored = await invoke('load_secure_data', { filename: 'identity_keypair.json' }); } catch(_) {}
-        } else {
-          stored = localStorage.getItem('ticmsg_identity_kp');
-        }
-        if (stored) {
-          try {
-            const kp = JSON.parse(stored);
-            if (kp.pub && el) el.textContent = kp.pub;
-          } catch(_) {}
-        }
-      };
-      setTimeout(tryShow, 800);
-    })();
-
-    document.getElementById('btn-copy-pubkey')?.addEventListener('click', () => {
-      const txt = document.getElementById('activation-pubkey').textContent;
-      navigator.clipboard.writeText(txt).then(() => {
-        const btn = document.getElementById('btn-copy-pubkey');
-        btn.textContent = '✅ 복사됨';
-        setTimeout(() => { btn.innerHTML = '<svg><use href="#icon-copy"/></svg> 복사'; }, 2000);
-      });
-    });
   });
 </script>
 </body>

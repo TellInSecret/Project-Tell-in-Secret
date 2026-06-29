@@ -61,32 +61,46 @@ class P2PMeshManager {
 
     this.rtcConfig = {
       iceServers: [
+        // ─── STUN (공인 IP 탐색) ───────────────────────────
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun.cloudflare.com:3478' },
-      ]
+        // ─── TURN (서로 다른 NAT 뒤 피어 간 릴레이) ─────────
+        // 기본값: Open Relay (Metered 제공 공개 무료 TURN) — 가입 없이 즉시 작동.
+        // 운영 시에는 setTurnServers()로 전용 Metered/coturn 자격증명으로 교체 권장.
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
+      ],
+      iceCandidatePoolSize: 4,
     };
   }
 
+  // ─── TURN 서버 교체 (운영용 전용 자격증명) ──────────────
+  // 예) p2p.setTurnServers([{ urls:'turn:my.turn:3478', username:'u', credential:'c' }])
+  setTurnServers(turnServers = []) {
+    const stunOnly = this.rtcConfig.iceServers.filter(s => {
+      const u = Array.isArray(s.urls) ? s.urls[0] : s.urls;
+      return typeof u === 'string' && u.startsWith('stun:');
+    });
+    this.rtcConfig.iceServers = [...stunOnly, ...turnServers];
+  }
+
   // ─── Initialize (load or generate long-term keypair) ─────
-  async initialize(existingKeyPair = null, existingPublicKeyBase64 = null) {
-    if (existingKeyPair && existingPublicKeyBase64) {
-      this.localKeyPair = existingKeyPair;
-      this.localPublicKeyBase64 = existingPublicKeyBase64;
-      return;
-    }
-
-    const authManager = window.AuthManager || window.LocalIdentity;
-    if (authManager?.getDecryptedKeyPair) {
-      const authKeyPair = authManager.getDecryptedKeyPair();
-      if (authKeyPair?.publicKey && authKeyPair?.privateKey) {
-        this.localKeyPair = authKeyPair;
-        this.localPublicKeyBase64 = await CryptoHelper.exportPublicKey(authKeyPair.publicKey);
-        return;
-      }
-    }
-
+  async initialize() {
     const invoke = window.__TAURI__?.core?.invoke;
     const saveKp = async (pub, privJwk) => {
       const data = JSON.stringify({ pub, priv: privJwk });
@@ -175,17 +189,6 @@ class P2PMeshManager {
     // 시그널링 클라이언트에게 방 입장 요청 (roomId = 공개 식별자)
     if (this.signalingClient?.joinRoom) {
       await this.signalingClient.joinRoom(roomCode, this.roomId, this.roomSalt, roomName || roomCode);
-    }
-  }
-
-  async joinRoomWithPassword(roomCode, roomPassword, roomSalt = '') {
-    this.roomCode = roomCode;
-    this.roomSalt = roomSalt || await CryptoHelper.deriveRoomSalt(roomCode);
-    this.roomId   = await CryptoHelper.deriveRoomId(roomCode);
-    this.groupKey = await CryptoHelper.deriveRoomGroupKey(roomCode, this.roomSalt);
-    this.channelKeys = {};
-    if (this.signalingClient?.joinRoom) {
-      await this.signalingClient.joinRoom(roomCode, this.roomId, this.roomSalt, roomPassword || roomCode);
     }
   }
 
@@ -507,9 +510,11 @@ class P2PMeshManager {
     const key = await this._ensureChannelKey(cid);
     if (!key) return;
 
-    const encrypted = await CryptoHelper.encrypt(key, text);
-    // [v2] msgId 추가 → gossip 중복 방지
+    // [v2 위변조 검사] msgId를 먼저 만들고, 메타데이터를 AAD로 묶어 암호화.
+    // channelId/msgId가 전송 중 변조되면 수신측 복호화가 실패 → 위변조 감지.
     const msgId = crypto.randomUUID();
+    const aad = `CHAT_MSG|${cid}|${msgId}`;
+    const encrypted = await CryptoHelper.encrypt(key, text, aad);
 
     const packet = JSON.stringify({
       type: 'CHAT_MSG',
@@ -539,11 +544,15 @@ class P2PMeshManager {
     const key = await this._ensureChannelKey(cid);
     if (!key) return;
     try {
-      const plainText = await CryptoHelper.decrypt(key, packet.ciphertext);
+      // [v2 위변조 검사] 송신측과 동일한 AAD로 복호화.
+      // 평문 메타데이터(channelId/msgId)가 변조됐다면 AAD 불일치로 복호화 예외 발생.
+      const aad = `CHAT_MSG|${cid}|${packet.msgId || ''}`;
+      const plainText = await CryptoHelper.decrypt(key, packet.ciphertext, false, aad);
       const sender = this.peers[fromPeerId]?.username || '알 수 없음';
       this.onMessage(this.roomName, sender, plainText, null, cid);
     } catch (e) {
-      console.error('Failed to decrypt chat message', e);
+      // 복호화 실패 = 잘못된 키 또는 위변조된 메시지 → 폐기
+      console.warn('[보안] 메시지 복호화/무결성 검증 실패 (위변조 또는 키 불일치):', e?.message || e);
     }
   }
 
@@ -561,8 +570,9 @@ class P2PMeshManager {
     const rawGroupKeyBytes = new Uint8Array(CryptoHelper.base64ToArrayBuffer(rawGroupKey));
 
     const meta = JSON.stringify({ fileId, name: file.name, size: file.size, type: file.type, totalChunks, channelId: cid });
-    const encMeta = await CryptoHelper.encrypt(key, meta);
-    const metaPacket = JSON.stringify({ type: 'FILE_META', ciphertext: encMeta });
+    const metaAad = `FILE_META|${cid}`;
+    const encMeta = await CryptoHelper.encrypt(key, meta, metaAad);
+    const metaPacket = JSON.stringify({ type: 'FILE_META', channelId: cid, ciphertext: encMeta });
 
     this._broadcastToAuthenticated(metaPacket);
     this.onMessage(this.roomName, this.myUsername, `[파일 전송 시작: ${file.name}]`, null, cid);
@@ -639,16 +649,20 @@ class P2PMeshManager {
   }
 
   async _handleFileMeta(packet, fromPeerId) {
-    const cid = this.activeChannelId;
+    // [v2 위변조 검사] 송신측이 묶은 채널과 동일한 채널 키/AAD로 복호화
+    const cid = packet.channelId || this.activeChannelId;
     const key = await this._ensureChannelKey(cid);
     if (!key) return;
     try {
-      const metaStr = await CryptoHelper.decrypt(key, packet.ciphertext);
+      const metaAad = `FILE_META|${cid}`;
+      const metaStr = await CryptoHelper.decrypt(key, packet.ciphertext, false, metaAad);
       const meta = JSON.parse(metaStr);
       this.incomingFiles[meta.fileId] = { ...meta, receivedChunksCount: 0 };
       this.onMessage(this.roomName, this.peers[fromPeerId]?.username || '알 수 없음',
         `[파일 수신 대기: ${meta.name}]`, null, meta.channelId);
-    } catch (e) { console.error('File meta decrypt failed', e); }
+    } catch (e) {
+      console.warn('[보안] 파일 메타 복호화/무결성 검증 실패 (위변조 또는 키 불일치):', e?.message || e);
+    }
   }
 
   async _handleFileChunk(arrayBuffer, senderId) {

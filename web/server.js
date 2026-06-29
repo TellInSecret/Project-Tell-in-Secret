@@ -16,7 +16,10 @@
  *  - 피어 인증은 클라이언트 SPAKE2-lite로 수행 (서버 무관)
  *
  * 실행: node server.js
- * 환경변수: PORT (기본 3000)
+ * 환경변수:
+ *   PORT (기본 3000)
+ *   HOST (기본 0.0.0.0 - 모든 네트워크 인터페이스에서 수신 → LAN/외부 접속 허용)
+ *        localhost 전용으로 제한하려면 HOST=127.0.0.1 설정
  */
 
 const http      = require('http');
@@ -144,7 +147,10 @@ function leaveRoom(ws, client) {
   client.roomId = null;
 }
 
-server.listen(PORT, () => {
-  console.log(`[TicMsg v2] Signaling server on ws://localhost:${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0';
+server.listen(PORT, HOST, () => {
+  console.log(`[TicMsg v2] Signaling server listening on ${HOST}:${PORT}`);
+  console.log(`[TicMsg v2] Local:   ws://localhost:${PORT}`);
+  console.log(`[TicMsg v2] Network: ws://<this-machine-ip>:${PORT} (LAN/외부 접속용)`);
   console.log(`[TicMsg v2] No auth, no DB - pure WebRTC relay only`);
 });

@@ -7,7 +7,7 @@
  *  - 방 코드: 랜덤 단어 조합으로 자동 생성 (사용자가 타이핑할 필요 없음)
  *  - 충돌 내성: 같은 방 코드라도 ECDH sharedKey가 다르면 내용 불가 해독
  *  - HKDF salt를 zero-bytes → roomSalt로 변경 (보안 강화)
- *  - ECDH: P-256 → P-384로 업그레이드
+ *  - ECDH: P-256 (Web Crypto 호환성 우선)
  */
 const CryptoHelper = {
 
@@ -56,6 +56,24 @@ const CryptoHelper = {
   // 방 코드를 역산할 수 없음 (SHA-256 단방향)
   async deriveRoomId(roomCode) {
     return await this.sha256('ticmsg-room-id-v2:' + roomCode);
+  },
+
+  // ─── 기본 채널 ID (roomId에서 결정론적 파생) ────────────
+  // 모든 피어가 같은 roomId → 같은 기본 채널 ID → 같은 채널 키.
+  // app.js, signal_serverless.js 등 어디서든 이 함수를 써서 일관성 보장.
+  defaultChannelId(roomId) {
+    return roomId.slice(0, 16) + '-general';
+  },
+
+  // ─── 이름 기반 채널 ID (추가 채널용, 결정론적) ──────────
+  // 서버리스라 채널 생성을 동기화할 수단이 없으므로, 채널 ID를
+  // roomId + 채널 이름에서 결정론적으로 파생한다.
+  // → 같은 방에서 같은 이름의 채널을 만든 피어들끼리 자동으로
+  //   동일한 채널 ID와 채널 키를 공유한다 (별도 전파 불필요).
+  async channelIdFromName(roomId, name) {
+    const norm = (name || '').trim().toLowerCase();
+    const hash = await this.sha256('ticmsg-channel-id-v2:' + roomId + ':' + norm);
+    return 'ch-' + hash.slice(0, 24);
   },
 
   // ─── 충돌 내성 설명 ─────────────────────────────────────
@@ -192,13 +210,22 @@ const CryptoHelper = {
   },
 
   // ─── Encrypt / Decrypt (AES-GCM-256) ──────────────────
-  async encrypt(key, data) {
+  // aad(Additional Authenticated Data): 평문이지만 위변조를 막아야 하는
+  // 메타데이터(channelId, msgId, type 등)를 암호화 인증 태그에 묶는다.
+  // aad가 한 비트라도 바뀌면 복호화가 예외로 실패 → 위변조 감지.
+  async encrypt(key, data, aad = null) {
     const dataBuffer = typeof data === 'string'
       ? new TextEncoder().encode(data)
       : data;
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const params = { name: 'AES-GCM', iv };
+    if (aad != null) {
+      params.additionalData = typeof aad === 'string'
+        ? new TextEncoder().encode(aad)
+        : aad;
+    }
     const ciphertext = await window.crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv }, key, dataBuffer
+      params, key, dataBuffer
     );
     const combined = new Uint8Array(12 + ciphertext.byteLength);
     combined.set(iv, 0);
@@ -206,12 +233,18 @@ const CryptoHelper = {
     return this.arrayBufferToBase64(combined.buffer);
   },
 
-  async decrypt(key, encryptedBase64, returnRawBuffer = false) {
+  async decrypt(key, encryptedBase64, returnRawBuffer = false, aad = null) {
     const combined = new Uint8Array(this.base64ToArrayBuffer(encryptedBase64));
     const iv = combined.slice(0, 12);
     const ciphertext = combined.slice(12);
+    const params = { name: 'AES-GCM', iv };
+    if (aad != null) {
+      params.additionalData = typeof aad === 'string'
+        ? new TextEncoder().encode(aad)
+        : aad;
+    }
     const decrypted = await window.crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv }, key, ciphertext.buffer
+      params, key, ciphertext.buffer
     );
     if (returnRawBuffer) return decrypted;
     return new TextDecoder().decode(decrypted);

@@ -110,95 +110,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderRoomList();
   };
 
-
   const saveHistory = () =>
     tauriInvoke('save_secure_data', { filename: 'history.json', data: JSON.stringify(chatRooms) });
 
-  // ─── Local Onboarding & Login Check ────────────────────
+  // ─── Activation Check ───────────────────────────────────
   const checkActivation = async () => {
-    const isSetup = await AuthManager.init();
-    screens.activation.classList.remove('hidden');
-    screens.main.classList.add('hidden');
-
-    if (isSetup) {
-      // 이미 설정된 계정 정보가 존재 -> 로그인 화면 표시
-      document.getElementById('setup-options-container').classList.add('hidden');
-      document.getElementById('login-container').classList.remove('hidden');
-      document.getElementById('login-username-label').textContent = `${AuthManager.getUsername()} 님의 신원 데이터가 감지되었습니다.`;
-    } else {
-      // 신규 실행 -> 가입 / 가져오기 선택화면 표시
-      document.getElementById('setup-options-container').classList.remove('hidden');
-      document.getElementById('login-container').classList.add('hidden');
+    await LocalIdentity.init();
+    if (!LocalIdentity.isSetup()) {
+      screens.activation.classList.remove('hidden');
+      screens.main.classList.add('hidden');
+      return false;
     }
-    return false; // 로그인 완료 시 main으로 넘어감
+    screens.activation.classList.add('hidden');
+    screens.main.classList.remove('hidden');
+    return true;
   };
 
-  // Onboarding Tabs
-  document.getElementById('tab-setup-signup').addEventListener('click', () => {
-    document.getElementById('setup-signup-form').classList.remove('hidden');
-    document.getElementById('setup-import-form').classList.add('hidden');
-    document.getElementById('tab-setup-signup').className = 'btn btn-primary';
-    document.getElementById('tab-setup-import').className = 'btn btn-secondary';
-  });
+  // ─── Activation Form (v2: 서버리스, 사용자명만 설정) ────
+  document.getElementById('btn-do-activate')?.addEventListener('click', async () => {
+    const username = document.getElementById('activation-username-input')?.value.trim();
+    if (!username) return showActivationError('사용자명을 입력하세요.');
 
-  document.getElementById('tab-setup-import').addEventListener('click', () => {
-    document.getElementById('setup-signup-form').classList.add('hidden');
-    document.getElementById('setup-import-form').classList.remove('hidden');
-    document.getElementById('tab-setup-signup').className = 'btn btn-secondary';
-    document.getElementById('tab-setup-import').className = 'btn btn-primary';
-  });
-
-  // Action: Sign Up
-  document.getElementById('btn-do-signup').addEventListener('click', async () => {
-    const username = document.getElementById('signup-username').value.trim();
-    const password = document.getElementById('signup-password').value.trim();
-    if (!username) return showActivationError('대화명을 입력하세요.');
-    if (password.length < 4) return showActivationError('비밀번호는 최소 4자 이상이어야 합니다.');
-
-    const btn = document.getElementById('btn-do-signup');
-    btn.disabled = true;
-    btn.textContent = '신원 생성 중...';
-
-    try {
-      await AuthManager.signUp(username, password);
-      myUsername = AuthManager.getUsername();
-      myUsernameDisplay.textContent = myUsername;
-      await saveConfig();
-
-      // P2P/Signaling 초기화 및 구동
-      await initP2P();
-      initSignaling();
-
-      screens.activation.classList.add('hidden');
-      screens.main.classList.remove('hidden');
-    } catch (e) {
-      showActivationError(e.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '신규 가입 완료';
+    const btn = document.getElementById('btn-do-activate');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '설정 중...';
     }
-  });
-
-  // Action: Key Import
-  document.getElementById('btn-do-import').addEventListener('click', async () => {
-    const username = document.getElementById('import-username').value.trim();
-    const password = document.getElementById('import-password').value.trim();
-    const keyJson = document.getElementById('import-key-json').value.trim();
-    if (!username) return showActivationError('대화명을 입력하세요.');
-    if (password.length < 4) return showActivationError('비밀번호는 최소 4자 이상이어야 합니다.');
-    if (!keyJson) return showActivationError('백업 키 JSON 텍스트를 입력하세요.');
-
-    const btn = document.getElementById('btn-do-import');
-    btn.disabled = true;
-    btn.textContent = '가져오는 중...';
 
     try {
-      await AuthManager.signInWithImport(username, password, keyJson);
-      myUsername = AuthManager.getUsername();
+      await LocalIdentity.setUsername(username);
+      myUsername = username;
       myUsernameDisplay.textContent = myUsername;
       await saveConfig();
 
-      await initP2P();
+      // Initialize signaling (serverless mode)
       initSignaling();
 
       screens.activation.classList.add('hidden');
@@ -206,36 +151,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (e) {
       showActivationError(e.message);
     } finally {
-      btn.disabled = false;
-      btn.textContent = '가져오기 완료';
-    }
-  });
-
-  // Action: Login (Unlock)
-  document.getElementById('btn-do-login').addEventListener('click', async () => {
-    const password = document.getElementById('login-password').value.trim();
-    if (!password) return showActivationError('비밀번호를 입력하세요.');
-
-    const btn = document.getElementById('btn-do-login');
-    btn.disabled = true;
-    btn.textContent = '잠금 해제 중...';
-
-    try {
-      await AuthManager.login(password);
-      myUsername = AuthManager.getUsername();
-      myUsernameDisplay.textContent = myUsername;
-      await saveConfig();
-
-      await initP2P();
-      initSignaling();
-
-      screens.activation.classList.add('hidden');
-      screens.main.classList.remove('hidden');
-    } catch (e) {
-      showActivationError(e.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '잠금 해제';
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '시작하기';
+      }
     }
   });
 
@@ -246,6 +165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(() => el.classList.add('hidden'), 4000);
   }
 
+  // ─── Init P2P ───────────────────────────────────────────
   const initP2P = async () => {
     p2p = new P2PMeshManager({
       username: myUsername,
@@ -255,49 +175,42 @@ document.addEventListener('DOMContentLoaded', async () => {
       onChannelUpdate: handleChannelUpdate,
       onPeerUpdate: handlePeerUpdate,
     });
-    const identityKeyPair = typeof AuthManager.getDecryptedKeyPair === 'function'
-      ? AuthManager.getDecryptedKeyPair()
-      : null;
-    const publicKey = typeof AuthManager.getPublicKeyBase64 === 'function'
-      ? await AuthManager.getPublicKeyBase64()
-      : null;
-    await p2p.initialize(identityKeyPair, publicKey);
+    await p2p.initialize();
 
     // Show public key (identity code)
     const myCode = await FriendCode.generateMyFriendCode(p2p.localKeyPair.publicKey);
     if (myFriendCodeEl) myFriendCodeEl.textContent = myCode;
   };
 
-  // ─── Init Signaling ─────────────────────────────────────
+  // ─── Init Signaling (v2: 서버리스 PeerJS 브로커 시그널링) ─
   const initSignaling = () => {
-    if (sigClient) sigClient.destroy();
+    if (sigClient) { try { sigClient.destroy(); } catch (_) {} }
 
-    const serverUrl = AuthManager.getServerUrl?.() || '';
-    const useRemoteSignal = typeof serverUrl === 'string' && /^(wss?:\/\/)/.test(serverUrl);
-    const signalingOptions = {
+    // 피어 ID 보장 (initialize 이후 호출되므로 localPublicKeyBase64 사용 가능)
+    if (!p2p.myPeerId) p2p.myPeerId = crypto.randomUUID();
+
+    // 서버리스 시그널링 객체 생성.
+    // onConnected/onDisconnected/onError만 여기서 지정하고,
+    // onRoomJoined/onPeerJoined/onPeerLeft/onSignal은 attachSignaling이 덮어쓴다.
+    sigClient = new ServerlessSignaling({
+      username: myUsername,
       onConnected: (peerId) => {
         p2p.myPeerId = peerId;
         onlineIndicator.classList.add('online');
-        onlineIndicator.title = useRemoteSignal ? '시그널링 연결됨' : '로컬 시그널링 준비됨';
+        onlineIndicator.title = '서버리스 P2P 연결됨';
       },
       onDisconnected: () => {
         onlineIndicator.classList.remove('online');
         onlineIndicator.title = '시그널링 연결 끊김 (재연결 중...)';
       },
       onError: (err) => console.error('[Signal Error]', err),
-      username: myUsername,
-    };
+    });
 
-    sigClient = useRemoteSignal
-      ? new SignalingClient(serverUrl, signalingOptions)
-      : new ServerlessSignaling(signalingOptions);
-
+    // p2p의 시그널링 콜백 연결 (onRoomJoined/onPeerJoined/onPeerLeft/onSignal 등록)
     p2p.attachSignaling(sigClient);
-    sigClient.connect(
-      p2p.myPeerId || crypto.randomUUID(),
-      p2p.localPublicKeyBase64,
-      myUsername
-    );
+
+    // PeerJS 브로커 연결 시작 (라이브러리 없으면 내부에서 manual 폴백)
+    sigClient.connect(p2p.myPeerId, p2p.localPublicKeyBase64);
   };
 
   // ─── P2P Callbacks ──────────────────────────────────────
@@ -408,22 +321,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   const isActivated = await checkActivation();
   if (isActivated) initSignaling();
 
-  // ─── Settings Modal ─────────────────────────────────────
-  document.getElementById('btn-settings').addEventListener('click', () => {
+  // ─── Settings Modal (v2: 서버 설정 제거) ───────────────
+  document.getElementById('btn-settings')?.addEventListener('click', () => {
     document.getElementById('settings-username').value = myUsername;
-    document.getElementById('settings-server-url').value = AuthManager.getServerUrl();
     showModal(modals.settings);
   });
-  document.getElementById('btn-save-settings').addEventListener('click', async () => {
-    const val = document.getElementById('settings-username').value.trim();
-    const url = document.getElementById('settings-server-url').value.trim();
+  document.getElementById('btn-save-settings')?.addEventListener('click', async () => {
+    const val = document.getElementById('settings-username')?.value.trim();
     if (val) {
       myUsername = val;
       myUsernameDisplay.textContent = val;
       if (p2p) p2p.setUsername(val);
+      await LocalIdentity.setUsername(val);
       await saveConfig();
     }
-    if (url) await AuthManager.setServerUrl(url);
     hideModal(modals.settings);
   });
 
@@ -451,47 +362,48 @@ document.addEventListener('DOMContentLoaded', async () => {
     railBrand.style.cursor = 'pointer';
   }
 
-  // ─── Create Room ────────────────────────────────────────
-  document.getElementById('btn-create-room').addEventListener('click', () => {
+  // ─── Create Room (v2: 서버리스, 로컬 전용) ──────────────
+  document.getElementById('btn-create-room')?.addEventListener('click', () => {
     prepareCreateRoomModal();
     showModal(modals.createRoom);
   });
-  document.getElementById('btn-do-create-room').addEventListener('click', async () => {
-    const name = document.getElementById('create-room-name').value.trim();
+  document.getElementById('btn-do-create-room')?.addEventListener('click', async () => {
+    const name = document.getElementById('create-room-name')?.value.trim();
     const roomKey = createRoomKeyInput?.value.trim();
     const password = createRoomPasswordInput?.value.trim();
-    const persistent = document.getElementById('create-room-persistent').checked;
+    const persistent = document.getElementById('create-room-persistent')?.checked;
     if (!name) return alert('방 이름을 입력하세요.');
     if (!roomKey) return alert('생성된 방 비밀키가 없습니다. 새로고침 후 다시 시도하세요.');
     if (password && password.length < 6) return alert('방 비번은 6자 이상이어야 합니다.');
 
     try {
-      const roomId = await CryptoHelper.deriveRoomId(roomKey);
-      const roomSalt = await CryptoHelper.deriveRoomSalt(roomKey);
-      const roomChannels = [{ id: `${roomId.slice(0, 16)}-general`, name: '일반', position: 0 }];
+      if (!sigClient) initSignaling();
 
+      // [v2] 방 코드 하나로 salt/roomId/groupKey를 결정론적으로 파생.
+      // password는 방 코드와 결합해 키 파생에 반영 → 같은 코드라도 비번이 다르면 다른 방.
+      const joinCode = password ? `${roomKey}:${password}` : roomKey;
+      await p2p.joinRoomWithCode(joinCode, name);
+
+      // 파생된 공개 식별자(roomId)를 로컬 히스토리 키로 사용
+      const roomId = p2p.roomId;
+      // [채널 ID 통일] 모든 피어가 동일하게 쓰는 결정론적 기본 채널 ID.
+      // onRoomJoined가 나중에 와도 같은 값이라 키 불일치가 없다.
+      const channelId = CryptoHelper.defaultChannelId(roomId);
+      const channels = [{ id: channelId, name: '일반', position: 0 }];
       chatRooms[roomId] = {
         name,
-        channels: roomChannels,
+        channels,
         messages: {},
         persistent: !!persistent,
-        roomKey: roomKey,
-        roomSalt,
+        roomSalt: p2p.roomSalt,
         roomSecretKey: roomKey,
         roomPassword: password || '',
       };
       activeRoomId = roomId;
-      activeChannelId = roomChannels[0].id;
+      activeChannelId = channelId;
+      p2p.channels = channels;
+      p2p.setActiveChannel(activeChannelId);
       saveHistory();
-
-      if (p2p) {
-        p2p.channels = chatRooms[roomId].channels;
-        p2p.activeChannelId = activeChannelId;
-        await p2p.joinRoomWithCode(roomKey, name);
-        if (sigClient) {
-          sigClient.joinRoom(roomKey, p2p.roomId, p2p.roomSalt, name);
-        }
-      }
 
       hideModal(modals.createRoom);
       renderRoomList();
@@ -504,49 +416,49 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // ─── Join Room by Key ────────────────────────────────────
-  document.getElementById('btn-join-room').addEventListener('click', () => {
+  // ─── Join Room by Key (v2: 서버리스, 로컬 전용) ─────────
+  document.getElementById('btn-join-room')?.addEventListener('click', () => {
     prepareJoinRoomModal();
     showModal(modals.joinByKey);
   });
-  document.getElementById('btn-do-join-by-key').addEventListener('click', async () => {
+  document.getElementById('btn-do-join-by-key')?.addEventListener('click', async () => {
     const roomKey = joinRoomKeyInput?.value.trim();
     const password = joinRoomPasswordInput?.value.trim();
     if (!roomKey) return alert('방 비밀키를 입력하세요.');
 
     try {
-      const roomId = await CryptoHelper.deriveRoomId(roomKey);
-      const roomSalt = await CryptoHelper.deriveRoomSalt(roomKey);
-      const roomName = `방 ${roomKey}`;
+      if (!sigClient) initSignaling();
+
+      // [v2] 생성 측과 동일하게 방 코드(+비번)로 키를 결정론적으로 파생.
+      // 양쪽이 같은 코드를 쓰면 같은 roomId/salt/groupKey가 나와 연결·복호화가 일치.
+      const joinCode = password ? `${roomKey}:${password}` : roomKey;
+      await p2p.joinRoomWithCode(joinCode);
+
+      const roomId = p2p.roomId;
+      // [채널 ID 통일] 생성 측과 같은 결정론적 채널 ID 사용 → 키 일치 보장
+      const channelId = CryptoHelper.defaultChannelId(roomId);
       if (!chatRooms[roomId]) {
         chatRooms[roomId] = {
-          name: roomName,
-          channels: [{ id: `${roomId.slice(0, 16)}-general`, name: '일반', position: 0 }],
+          name: '방 ' + roomId.substring(0, 8),
+          channels: [{ id: channelId, name: '일반', position: 0 }],
           messages: {},
           persistent: false,
-          roomKey,
-          roomSalt,
-          password,
+          roomSalt: p2p.roomSalt,
+          roomSecretKey: roomKey,
+          roomPassword: password || '',
         };
       }
 
       activeRoomId = roomId;
-      activeChannelId = chatRooms[roomId].channels[0]?.id;
+      activeChannelId = channelId;
+      p2p.channels = chatRooms[roomId].channels;
+      p2p.setActiveChannel(activeChannelId);
       saveHistory();
-
-      if (p2p) {
-        p2p.channels = chatRooms[roomId].channels;
-        p2p.activeChannelId = activeChannelId;
-        await p2p.joinRoomWithPassword(roomKey, password, roomSalt);
-        if (sigClient) {
-          sigClient.joinRoom(roomKey, p2p.roomId, p2p.roomSalt, roomName);
-        }
-      }
 
       hideModal(modals.joinByKey);
       renderRoomList();
       renderChannelList();
-      chatTitle.textContent = roomName;
+      chatTitle.textContent = chatRooms[roomId].name;
       welcomeScreen.classList.add('hidden');
       chatScreen.classList.remove('hidden');
     } catch (e) {
@@ -554,26 +466,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // ─── Fetch persistent messages ──────────────────────────
+  // ─── Fetch persistent messages (v2: 서버리스, 기능 제거) ──
   async function fetchPersistentMessages(channelId) {
-    if (!activeRoomId || !chatRooms[activeRoomId]?.persistent) return;
-    try {
-      const stored = await AuthManager.fetchMessages(channelId, 0);
-      for (const msg of stored) {
-        const key = await p2p._ensureChannelKey(channelId);
-        if (!key) continue;
-        try {
-          const plaintext = await CryptoHelper.decrypt(key, msg.ciphertext);
-          const obj = { sender: '[오프라인 메시지]', text: plaintext, timestamp: new Date(msg.sent_at).toLocaleTimeString(), file: null };
-          if (!chatRooms[activeRoomId].messages[channelId]) chatRooms[activeRoomId].messages[channelId] = [];
-          chatRooms[activeRoomId].messages[channelId].unshift(obj);
-        } catch (_) {}
-      }
-      if (activeChannelId === channelId) renderMessages(activeRoomId, activeChannelId);
-    } catch (e) { console.error('Failed to fetch persistent messages', e); }
+    // v2는 서버리스이므로 서버에서 메시지를 가져올 수 없음
+    // 로컬 저장소에서만 메시지 복구
+    return;
   }
 
-  // ─── Channel Switching ──────────────────────────────────
+  // ─── Channel Switching (v2: persistent fetch 제거) ──────
   function switchChannel(channelId) {
     activeChannelId = channelId;
     p2p.setActiveChannel(channelId);
@@ -581,31 +481,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     chatTitle.textContent = ch ? `# ${ch.name}` : '채널';
     renderMessages(activeRoomId, channelId);
     renderChannelList();
-    // Fetch persistent messages
-    if (chatRooms[activeRoomId]?.persistent) fetchPersistentMessages(channelId);
+    // v2: 서버에서 메시지 가져오기 제거
   }
 
-  // ─── Add Channel ────────────────────────────────────────
-  document.getElementById('btn-add-channel').addEventListener('click', () => showModal(modals.addChannel));
-  document.getElementById('btn-do-add-channel').addEventListener('click', async () => {
-    const name = document.getElementById('new-channel-name').value.trim();
+  // ─── Add Channel (v2: 서버리스, 로컬 전용) ──────────────
+  document.getElementById('btn-add-channel')?.addEventListener('click', () => showModal(modals.addChannel));
+  document.getElementById('btn-do-add-channel')?.addEventListener('click', async () => {
+    const name = document.getElementById('new-channel-name')?.value.trim();
     if (!name) return;
     if (!activeRoomId) return;
 
     try {
       const room = chatRooms[activeRoomId];
-      let channelId = crypto.randomUUID();
+      // [v2] 채널 ID를 이름에서 결정론적으로 파생 → 같은 이름 채널을 만든
+      // 다른 피어와 자동으로 같은 채널 ID/키를 공유 (서버리스 동기화 불필요).
+      const channelId = await CryptoHelper.channelIdFromName(activeRoomId, name);
 
-      if (AuthManager.isActivated() && room?.roomKeyHash) {
-        const roomData = await AuthManager.getRoom(room.roomKeyHash);
-        if (roomData) {
-          const newCh = await AuthManager.createChannel(roomData.roomId, name);
-          channelId = newCh.channelId;
-        }
+      if (!chatRooms[activeRoomId].channels) chatRooms[activeRoomId].channels = [];
+      // 이미 같은 채널이 있으면 추가하지 않고 그 채널로 전환
+      if (chatRooms[activeRoomId].channels.some(c => c.id === channelId)) {
+        switchChannel(channelId);
+        hideModal(modals.addChannel);
+        return;
       }
 
-      const ch = { id: channelId, name, position: (chatRooms[activeRoomId].channels?.length || 0) };
-      if (!chatRooms[activeRoomId].channels) chatRooms[activeRoomId].channels = [];
+      const ch = { id: channelId, name, position: chatRooms[activeRoomId].channels.length };
       chatRooms[activeRoomId].channels.push(ch);
       if (p2p) p2p.channels = chatRooms[activeRoomId].channels;
       saveHistory();
@@ -615,7 +515,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ─── Leave Room ─────────────────────────────────────────
-  document.getElementById('btn-leave-room').addEventListener('click', () => {
+  document.getElementById('btn-leave-room')?.addEventListener('click', () => {
     if (confirm('방을 나가시겠습니까?')) {
       const roomIdToRemove = activeRoomId;
       p2p?.leaveRoom();
@@ -630,7 +530,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ─── Security / Members ─────────────────────────────────
-  document.getElementById('btn-show-security').addEventListener('click', async () => {
+  document.getElementById('btn-show-security')?.addEventListener('click', async () => {
     if (p2p?.groupKey) {
       const fp = await CryptoHelper.getFingerprint(p2p.groupKey);
       document.getElementById('security-fingerprint').textContent = fp;
@@ -638,7 +538,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showModal(modals.security);
   });
 
-  document.getElementById('btn-show-members').addEventListener('click', () => {
+  document.getElementById('btn-show-members')?.addEventListener('click', () => {
     const ul = document.getElementById('members-list-ul');
     ul.innerHTML = '';
     p2p?.getMembers().forEach(m => {
@@ -786,23 +686,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // ─── Add Friend (server relay) ───────────────────────────
+  // ─── Add Friend (server relay) (v2: 서버리스, 기능 제거) ──
   document.getElementById('btn-add-friend')?.addEventListener('click', () => showModal(modals.addFriend));
   document.getElementById('btn-generate-friend-req')?.addEventListener('click', async () => {
-    const codeRaw = document.getElementById('friend-code-input').value.trim();
+    const codeRaw = document.getElementById('friend-code-input')?.value.trim();
     if (!codeRaw) return alert('상대방 친구 코드를 입력하세요.');
     try {
       const remotePubKey = await FriendCode.parseFriendCode(codeRaw);
       const remotePubKeyStr = await CryptoHelper.exportPublicKey(remotePubKey);
       const targetKeyHash = await CryptoHelper.sha256(remotePubKeyStr);
 
-      if (typeof sigClient?.sendFriendRequest === 'function') {
-        const offerPayload = { sdp: '서버 시그널링 사용', username: myUsername, publicKey: p2p.localPublicKeyBase64 };
-        sigClient.sendFriendRequest(targetKeyHash, offerPayload);
-        alert('친구 요청을 전송했습니다. 상대방이 온라인이면 자동으로 연결됩니다.');
-      } else {
-        alert('현재 로컬 모드에서는 친구 요청 전송이 지원되지 않습니다. 상대방에게 친구 코드를 공유해 직접 연결해 주세요.');
-      }
+      // v2: 서버리스이므로 시그널링 서버를 통한 친구 요청 불가
+      // 대신 친구 코드를 로컬에 저장하고 수동으로 방 코드 공유
+      alert('v2 서버리스 버전에서는 방 코드를 직접 공유하여 연결하세요.');
     } catch (e) { alert('오류: ' + e.message); }
   });
 
