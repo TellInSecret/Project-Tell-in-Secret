@@ -1,11 +1,12 @@
 {
   "name": "ticmsg",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Secure P2P E2EE Messenger",
   "scripts": {
     "tauri": "tauri"
   },
   "devDependencies": {
+    "punycode": "^2.3.1",
     "tauri": "^0.15.0",
     "@tauri-apps/cli": "^2.11.4"
   }
