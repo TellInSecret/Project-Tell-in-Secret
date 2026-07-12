@@ -34,12 +34,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust Build
-        uses: swatinem/rust-cache@v2
-        with:
-          key: ${{ runner.os }}-rust-v1
-          workspaces: client/src-tauri -> target
-
       - name: Install Linux Dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -52,14 +46,12 @@ jobs:
           npm ci
 
       - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DYLD_FALLBACK_LIBRARY_PATH: ""
-        with:
-          tagName: app-v__VERSION__
-          releaseName: "App v__VERSION__"
-          releaseBody: "Automated release by GitHub Actions"
-          releaseDraft: true
-          prerelease: false
-          projectPath: "client"
+        run: |
+          cd client
+          # 환경 변수 강제 초기화
+          export DYLD_FALLBACK_LIBRARY_PATH=""
+          export LD_LIBRARY_PATH=""
+          # Tauri 2.0 빌드
+          npx tauri build
