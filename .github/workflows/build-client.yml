@@ -75,8 +75,14 @@ jobs:
           cd ..
           npx tauri build
 
+      - name: Debug and Upload artifacts
+        run: |
+          echo "Listing contents of target-build:"
+          ls -R client/src-tauri/target-build || true
+          
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: tauri-build-${{ matrix.platform }}
-          path: client/src-tauri/target-build/release/bundle/
+          path: client/src-tauri/target-build/**/bundle/
+          if-no-files-found: warn
