@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>로그인 - TicMsg</title>
+  <link rel="stylesheet" href="css/site.css">
+  <style>
+    /* 인증 체크 중 깜빡임 방지 */
+    body { visibility: hidden; }
+    body.ready { visibility: visible; }
+  </style>
+</head>
+<body>
+
+<div class="auth-page">
+  <div class="auth-box">
+    <div class="auth-logo">🔐 TicMsg</div>
+    <div class="auth-title">로그인</div>
+    <div class="auth-subtitle">계정에 로그인하세요</div>
+
+    <div id="alert-box" class="alert"></div>
+
+    <form id="login-form" onsubmit="return false;">
+      <div class="form-group">
+        <label for="login-username">아이디</label>
+        <input type="text" id="login-username" placeholder="아이디 입력" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label for="login-password">비밀번호</label>
+        <input type="password" id="login-password" placeholder="비밀번호 입력" autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary btn-full" id="btn-login" type="button">
+        <span id="login-btn-text">로그인</span>
+        <span id="login-spinner" class="spinner" style="display:none;"></span>
+      </button>
+    </form>
+
+    <div class="form-divider">또는</div>
+    <a href="register.html" style="display:block; text-align:center; font-size:0.88rem;">
+      계정이 없으신가요? <strong>회원가입</strong>
+    </a>
+  </div>
+</div>
+
+<script>
+const API = window.TICMSG_API || '';
+
+function showAlert(msg, type = 'error') {
+  const el = document.getElementById('alert-box');
+  el.className = `alert alert-${type} show`;
+  el.textContent = msg;
+}
+
+// 토큰 서버 검증 후 자동 리다이렉트 (점멸 방지)
+(async function checkExistingSession() {
+  const token = localStorage.getItem('ticmsg_token');
+  if (!token) {
+    // 토큰 없음 → 바로 로그인 화면 표시
+    document.body.classList.add('ready');
+    return;
+  }
+
+  // 루프 방지: 직전에 dashboard에서 리다이렉트된 경우 재검증 생략
+  const redirectedFrom = sessionStorage.getItem('redirected_from_dashboard');
+  if (redirectedFrom === '1') {
+    sessionStorage.removeItem('redirected_from_dashboard');
+    localStorage.removeItem('ticmsg_token');
+    localStorage.removeItem('ticmsg_username');
+    document.body.classList.add('ready');
+    return;
+  }
+
+  try {
+    // 토큰이 서버에서 유효한지 확인 (기기 목록 API로 검증)
+    const res = await fetch(`${API}/api/devices`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) {
+      // 유효한 토큰 → dashboard로 이동
+      window.location.replace('dashboard.html');
+      return;
+    } else {
+      // 토큰 만료/무효 → 삭제 후 로그인 화면 표시
+      localStorage.removeItem('ticmsg_token');
+      localStorage.removeItem('ticmsg_username');
+    }
+  } catch (e) {
+    // 서버 연결 실패 → 로그인 화면 표시
+  }
+
+  document.body.classList.add('ready');
+})();
+
+document.getElementById('login-form').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('btn-login').click();
+});
+
+document.getElementById('btn-login').addEventListener('click', async () => {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  if (!username || !password) return showAlert('아이디와 비밀번호를 입력하세요.');
+
+  const btn = document.getElementById('btn-login');
+  btn.disabled = true;
+  document.getElementById('login-btn-text').textContent = '로그인 중...';
+  document.getElementById('login-spinner').style.display = 'inline-block';
+
+  try {
+    const res = await fetch(`${API}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) return showAlert(data.error || '로그인에 실패했습니다.');
+
+    localStorage.setItem('ticmsg_token', data.token);
+    localStorage.setItem('ticmsg_username', username);
+    window.location.replace('dashboard.html');
+  } catch (e) {
+    showAlert('서버 연결 오류: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    document.getElementById('login-btn-text').textContent = '로그인';
+    document.getElementById('login-spinner').style.display = 'none';
+  }
+});
+</script>
+</body>
+</html>
