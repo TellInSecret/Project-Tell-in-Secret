@@ -48,10 +48,11 @@ jobs:
       - name: Build Tauri App
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 빌드 프로세스에서 DYLD 환경 변수 비우기
+          DYLD_FALLBACK_LIBRARY_PATH: ""
+          LD_LIBRARY_PATH: ""
+          # Cargo 타겟 경로를 명시하여 오염된 경로 회피
+          CARGO_TARGET_DIR: "target-build"
         run: |
           cd client
-          # 환경 변수 강제 초기화
-          export DYLD_FALLBACK_LIBRARY_PATH=""
-          export LD_LIBRARY_PATH=""
-          # Tauri 2.0 빌드
           npx tauri build
