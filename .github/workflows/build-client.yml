@@ -45,16 +45,39 @@ jobs:
           cd client
           npm ci
 
-      - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v1
+      - name: Build Tauri App (Windows)
+        if: runner.os == 'Windows'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_TARGET_DIR: "target-build"
+        run: |
+          cd client
+          if (Test-Path "src-tauri/target") { Remove-Item -Recurse -Force "src-tauri/target" }
+          if (Test-Path "src-tauri/target-build") { Remove-Item -Recurse -Force "src-tauri/target-build" }
+          cd src-tauri
+          cargo update
+          cd ..
+          npx tauri build
+
+      - name: Build Tauri App (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DYLD_FALLBACK_LIBRARY_PATH: ""
           LD_LIBRARY_PATH: ""
+          CARGO_TARGET_DIR: "target-build"
+        run: |
+          cd client
+          rm -rf src-tauri/target src-tauri/target-build
+          cd src-tauri
+          cargo update
+          cd ..
+          npx tauri build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tagName: app-v__VERSION__
-          releaseName: "App v__VERSION__"
-          releaseBody: "Automated release by GitHub Actions"
-          releaseDraft: true
-          prerelease: false
-          projectPath: "client"
+          name: tauri-build-${{ matrix.platform }}
+          path: client/src-tauri/target-build/release/bundle/
+          if-no-files-found: warn
