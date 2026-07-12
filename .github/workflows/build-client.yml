@@ -51,8 +51,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd client
-          # 타겟 디렉토리 기본값으로 변경
+          # Windows는 PowerShell 환경이므로 다른 방식의 환경 초기화 필요
+          # 타겟 디렉토리 초기화
           if (Test-Path "src-tauri/target") { Remove-Item -Recurse -Force "src-tauri/target" }
+          
+          # 빌드 실행
           cd src-tauri
           cargo update
           cd ..
@@ -63,16 +66,24 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DYLD_FALLBACK_LIBRARY_PATH: ""
-          LD_LIBRARY_PATH: ""
         run: |
           cd client
-          # 타겟 디렉토리 기본값으로 변경
+          # 모든 환경 변수를 초기화하고 필요한 것만 설정하여 빌드
+          # env -i 는 현재 셸의 환경 변수를 모두 지웁니다.
+          # 빌드에 꼭 필요한 PATH 등을 복구하면서 실행합니다.
+          
+          # 이전 타겟 삭제
           rm -rf src-tauri/target
+          
           cd src-tauri
+          # 깨끗한 환경에서 빌드 실행
+          # DYLD_ 및 LD_ 환경 변수를 강제로 unset하고 호출
+          env -i PATH="$PATH" HOME="$HOME" GITHUB_TOKEN="$GITHUB_TOKEN" \
           cargo update
+          
+          env -i PATH="$PATH" HOME="$HOME" GITHUB_TOKEN="$GITHUB_TOKEN" \
+          npm run tauri build
           cd ..
-          npx tauri build
 
       - name: Debug and Upload artifacts
         run: |
