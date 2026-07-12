@@ -55,4 +55,11 @@ jobs:
           CARGO_TARGET_DIR: "target-build"
         run: |
           cd client
+          # 이전 빌드 흔적 완전 삭제
+          rm -rf src-tauri/target src-tauri/target-build
+          # Cargo 정보 갱신
+          cd src-tauri
+          cargo update
+          cd ..
+          # Tauri 빌드 실행
           npx tauri build
