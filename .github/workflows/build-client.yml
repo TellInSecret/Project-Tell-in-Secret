@@ -27,7 +27,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 
@@ -49,11 +49,10 @@ jobs:
         if: runner.os == 'Windows'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_TARGET_DIR: "target-build"
         run: |
           cd client
+          # 타겟 디렉토리 기본값으로 변경
           if (Test-Path "src-tauri/target") { Remove-Item -Recurse -Force "src-tauri/target" }
-          if (Test-Path "src-tauri/target-build") { Remove-Item -Recurse -Force "src-tauri/target-build" }
           cd src-tauri
           cargo update
           cd ..
@@ -66,10 +65,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DYLD_FALLBACK_LIBRARY_PATH: ""
           LD_LIBRARY_PATH: ""
-          CARGO_TARGET_DIR: "target-build"
         run: |
           cd client
-          rm -rf src-tauri/target src-tauri/target-build
+          # 타겟 디렉토리 기본값으로 변경
+          rm -rf src-tauri/target
           cd src-tauri
           cargo update
           cd ..
@@ -77,12 +76,12 @@ jobs:
 
       - name: Debug and Upload artifacts
         run: |
-          echo "Listing contents of target-build:"
-          ls -R client/src-tauri/target-build || true
+          echo "Listing all contents of src-tauri/target:"
+          find client/src-tauri/target -name "bundle" -type d || true
           
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: tauri-build-${{ matrix.platform }}
-          path: client/src-tauri/target-build/**/bundle/
+          path: client/src-tauri/target/**/bundle/
           if-no-files-found: warn
