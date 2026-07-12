@@ -55,9 +55,14 @@ jobs:
           CARGO_TARGET_DIR: "target-build"
         run: |
           cd client
-          # 이전 빌드 흔적 완전 삭제 (범용적인 방식)
-          if [ -d "src-tauri/target" ]; then rm -rf src-tauri/target; fi
-          if [ -d "src-tauri/target-build" ]; then rm -rf src-tauri/target-build; fi
+          # Windows 환경인 경우
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            powershell -Command "if (Test-Path 'src-tauri/target') { Remove-Item -Recurse -Force 'src-tauri/target' }"
+            powershell -Command "if (Test-Path 'src-tauri/target-build') { Remove-Item -Recurse -Force 'src-tauri/target-build' }"
+          else
+            # Linux/macOS 환경인 경우
+            rm -rf src-tauri/target src-tauri/target-build
+          fi
           # Cargo 정보 갱신
           cd src-tauri
           cargo update
