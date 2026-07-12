@@ -74,10 +74,22 @@ jobs:
           cargo update
           cd ..
           npx tauri build
-
-      - name: Upload artifacts
+          # 디버깅: 빌드 후 경로 확인
+          echo "--- 디버깅: 빌드 결과물 확인 ---"
+          find . -name "bundle" -type d
+          
+      - name: Upload artifacts (Windows)
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: tauri-build-${{ matrix.platform }}
-          path: client/src-tauri/target-build/release/bundle/
+          path: client/src-tauri/target-build/**/bundle/
+          if-no-files-found: warn
+
+      - name: Upload artifacts (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-build-${{ matrix.platform }}
+          path: client/src-tauri/target-build/**/bundle/
           if-no-files-found: warn
