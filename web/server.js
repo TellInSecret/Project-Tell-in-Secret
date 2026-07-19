@@ -27,7 +27,7 @@ const wss = new WebSocket.Server({ server });
 // ─────────────────────────────────────────────
 // Config
 // ─────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
 const BCRYPT_ROUNDS = 12;
 const MAX_DEVICES = 5;
@@ -634,6 +634,60 @@ function leaveRoom(ws, client) {
   client.roomId = null;
   client.channelId = null;
 }
+
+// ─────────────────────────────────────────────
+// REST API - Social (Friends, Servers)
+// ─────────────────────────────────────────────
+
+// POST /api/friends/request
+app.post('/api/friends/request', authMiddleware, async (req, res) => {
+  try {
+    const { friendUsername } = req.body;
+    const friend = await db.users.findByUsername(friendUsername);
+    if (!friend) return res.status(404).json({ error: '사용자를 찾을 수 없습니다.' });
+    if (friend.id === req.user.id) return res.status(400).json({ error: '자기 자신은 친구 추가할 수 없습니다.' });
+
+    await dbInstance.run('INSERT INTO friends (user_id, friend_id, status) VALUES (?, ?, 0)', [req.user.id, friend.id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: '친구 요청 실패' }); }
+});
+
+// GET /api/friends
+app.get('/api/friends', authMiddleware, async (req, res) => {
+  try {
+    const friends = await dbInstance.all('SELECT u.username, f.status FROM friends f JOIN users u ON f.friend_id = u.id WHERE f.user_id = ?', [req.user.id]);
+    res.json({ friends });
+  } catch (err) { res.status(500).json({ error: '목록 조회 실패' }); }
+});
+
+// POST /api/servers
+app.post('/api/servers', authMiddleware, async (req, res) => {
+  try {
+    const { name } = req.body;
+    const serverId = db.newId();
+    await dbInstance.run('INSERT INTO servers (id, name, owner_id) VALUES (?, ?, ?)', [serverId, name, req.user.id]);
+    // 기본 역할 추가 (Owner)
+    const roleId = db.newId();
+    await dbInstance.run('INSERT INTO roles (id, server_id, name, permissions) VALUES (?, ?, "Owner", 0)', [roleId, serverId]);
+    await dbInstance.run('INSERT INTO server_members (server_id, user_id, role_id) VALUES (?, ?, ?)', [serverId, req.user.id, roleId]);
+    res.json({ success: true, serverId });
+  } catch (err) { res.status(500).json({ error: '서버 생성 실패' }); }
+});
+
+// PATCH /api/servers/:serverId
+app.patch('/api/servers/:serverId', authMiddleware, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const { name, iconUrl } = req.body;
+    
+    // Check ownership
+    const server = await dbInstance.get('SELECT * FROM servers WHERE id = ?', [serverId]);
+    if (!server || server.owner_id !== req.user.id) return res.status(403).json({ error: '권한이 없습니다.' });
+
+    await dbInstance.run('UPDATE servers SET name = ?, icon_url = ? WHERE id = ?', [name, iconUrl, serverId]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: '서버 설정 업데이트 실패' }); }
+});
 
 // ─────────────────────────────────────────────
 // Periodic Cleanup

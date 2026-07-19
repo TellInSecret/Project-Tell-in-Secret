@@ -28,7 +28,44 @@ async function getDB() {
       id          TEXT PRIMARY KEY,
       username    TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      created_at  INTEGER NOT NULL
+      created_at  INTEGER NOT NULL,
+      status_message TEXT,
+      status_type INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS friends (
+      user_id TEXT,
+      friend_id TEXT,
+      status INTEGER,
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(friend_id) REFERENCES users(id),
+      PRIMARY KEY(user_id, friend_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS servers (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      icon_url TEXT,
+      owner_id TEXT,
+      FOREIGN KEY(owner_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS roles (
+      id TEXT PRIMARY KEY,
+      server_id TEXT,
+      name TEXT,
+      permissions INTEGER,
+      FOREIGN KEY(server_id) REFERENCES servers(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS server_members (
+      server_id TEXT,
+      user_id TEXT,
+      role_id TEXT,
+      FOREIGN KEY(server_id) REFERENCES servers(id),
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(role_id) REFERENCES roles(id),
+      PRIMARY KEY(server_id, user_id)
     );
 
     CREATE TABLE IF NOT EXISTS devices (
@@ -90,7 +127,16 @@ async function getDB() {
     CREATE INDEX IF NOT EXISTS idx_actkeys_device ON activation_keys(device_id);
   `);
 
+  // Handle migration for existing users table (adding new columns)
+  const usersTableInfo = await dbInstance.all('PRAGMA table_info(users)');
+  const hasStatusMessage = usersTableInfo.some(col => col.name === 'status_message');
+  if (!hasStatusMessage) {
+    await dbInstance.exec('ALTER TABLE users ADD COLUMN status_message TEXT');
+    await dbInstance.exec('ALTER TABLE users ADD COLUMN status_type INTEGER DEFAULT 0');
+  }
+
   return dbInstance;
+
 }
 
 // ─────────────────────────────────────────────

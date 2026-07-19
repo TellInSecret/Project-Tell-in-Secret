@@ -94,7 +94,16 @@ const AuthManager = {
     return data;
   },
 
-  // ─── Login (from web, optional for client) ─────
+  // ─── Login/Logout ────────────────────────────────
+  async logout() {
+    this._token = null;
+    this._username = null;
+    this._deviceId = null;
+    this._activated = false;
+    await this._saveConfig();
+    window.location.reload();
+  },
+
   async login(username, password) {
     const res = await fetch(`${this.serverUrl}/api/login`, {
       method: 'POST',

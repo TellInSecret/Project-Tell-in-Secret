@@ -737,7 +737,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (e) { alert('오류: ' + e.message); }
   });
 
+  // ─── Friend List & Load ──────────────────────────────────
+  async function loadFriends() {
+    const listEl = document.getElementById('friend-list');
+    if (!listEl) return;
+    try {
+      const res = await fetch(`${AuthManager.getServerUrl()}/api/friends`, {
+        headers: AuthManager.authHeaders()
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      listEl.innerHTML = data.friends.map(f => `
+        <li class="friend-item">
+          <div class="status-dot ${f.status === 1 ? 'status-online' : ''}"></div>
+          ${f.username}
+        </li>
+      `).join('');
+    } catch (e) { console.error('친구 목록 로딩 실패', e); }
+  }
+
+  // Bind Add Friend UI
+  document.getElementById('btn-add-friend-ui')?.addEventListener('click', () => showModal(modals.addFriend));
+
   // Initial render
   renderRoomList();
   renderChannelList();
+  loadFriends();
 });

@@ -1077,6 +1077,20 @@ svg {
   box-shadow: 0 0 8px #22c55e;
 }
 
+/* Friend List Category */
+.friend-list { list-style: none; padding: 0; margin-top: 8px; }
+.friend-item {
+  display: flex; align-items: center; padding: 6px 12px;
+  cursor: pointer; border-radius: 4px;
+  color: #949ba4; font-size: 0.88rem;
+  transition: all 0.15s;
+}
+.friend-item:hover { background-color: #2d2d30; color: #f0f0f0; }
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 8px; background: #4b5563;
+}
+.status-online { background: #22c55e; }
 /* Column 2: Channels Panel */
 .channels-panel {
   width: 240px;
